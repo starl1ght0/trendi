@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PostgreSQL Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>PostgreSQL Dashboard</h1>
+        
+        <div class="test-section">
+            <h2>Проверка сервера</h2>
+            
+            <button class="btn btn-success" onclick="checkServer()">
+                Проверить сервер
+            </button>
+            
+            <div id="serverResult" class="result">
+                Нажмите кнопку для проверки...
+            </div>
+            
+            <div id="serverStatus" class="status">
+                Не проверено
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Проверка PostgreSQL</h2>
+            
+            <button class="btn" onclick="checkPostgreSQL()" style="background: #17a2b8;">
+                Проверить подключение к БД
+            </button>
+            
+            <div id="dbResult" class="result">
+                Статус подключения к БД появится здесь...
+            </div>
+            
+            <div id="dbStatus" class="status">
+                Не проверено
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
