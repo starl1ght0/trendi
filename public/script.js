@@ -2,21 +2,24 @@ document.addEventListener('DOMContentLoaded', init);
 
 let chart;
 let abortController = null;
+let pollingInterval = null;
+const POLLING_INTERVAL_MS = 5000; // 5 секунд (можно изменить)
 
 function init() {
-    // Устанавливаем даты: начало = 2024-01-15 00:00, конец = сейчас
     setDefaultDates();
-
-    document.getElementById('load-btn').addEventListener('click', loadData);
-    loadData();
+    const onlineCheckbox = document.getElementById('online');
+    onlineCheckbox.checked = true; // ONLINE ВКЛЮЧЕН ПО УМОЛЧАНИЮ
+    document.getElementById('load-btn').addEventListener('click', () => {
+        loadData();
+    });
+    onlineCheckbox.addEventListener('change', onOnlineToggle);
+    // Запускаем polling (включая первую загрузку)
+    onOnlineToggle();
 }
 
 function setDefaultDates() {
-    // Начало: 15 января 2024 года, 00:00 (локальное время)
-    const startDate = new Date(2024, 0, 15, 0, 0, 0); // Месяцы: 0 = январь
-    // Конец: текущие дата и время
+    const startDate = new Date(2024, 0, 15, 0, 0, 0); // 15 января 2024, 00:00
     const endDate = new Date();
-
     document.getElementById('start').value = formatDateTimeLocal(startDate);
     document.getElementById('end').value = formatDateTimeLocal(endDate);
 }
@@ -30,12 +33,31 @@ function formatDateTimeLocal(date) {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
-/**
- * Загружает данные с сервера и обновляет график.
- * Используется AbortController для отмены предыдущего запроса.
- */
+function onOnlineToggle() {
+    const online = document.getElementById('online').checked;
+    if (online) {
+        startPolling();
+    } else {
+        stopPolling();
+    }
+}
+
+function startPolling() {
+    if (pollingInterval) return; // уже запущен
+    loadData(); // сразу загрузить данные
+    pollingInterval = setInterval(() => {
+        loadData();
+    }, POLLING_INTERVAL_MS);
+}
+
+function stopPolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+}
+
 async function loadData() {
-    // Отмена предыдущего запроса
     if (abortController) {
         abortController.abort();
     }
@@ -43,27 +65,41 @@ async function loadData() {
 
     const column = document.getElementById('column').value;
     const startInput = document.getElementById('start').value;
-    const endInput = document.getElementById('end').value;
     const online = document.getElementById('online').checked;
 
-    // Преобразуем строки из input в объекты Date (интерпретируются как локальное время)
-    const startDate = new Date(startInput + ':00');
-    const endDate = new Date(endInput + ':00');
+    let startDate, endDate;
 
-    if (isNaN(startDate) || isNaN(endDate)) {
-        alert('Пожалуйста, укажите корректные даты');
+    if (!startInput) {
+        alert('Укажите дату начала');
+        return;
+    }
+    startDate = new Date(startInput + ':00');
+    if (isNaN(startDate)) {
+        alert('Некорректная дата начала');
         return;
     }
 
-    // Формируем интервал в формате ISO (UTC)
+    if (online) {
+        endDate = new Date();
+        document.getElementById('end').value = formatDateTimeLocal(endDate);
+    } else {
+        const endInput = document.getElementById('end').value;
+        if (!endInput) {
+            alert('Укажите дату конца');
+            return;
+        }
+        endDate = new Date(endInput + ':00');
+        if (isNaN(endDate)) {
+            alert('Некорректная дата конца');
+            return;
+        }
+    }
+
     const startISO = startDate.toISOString();
     const endISO = endDate.toISOString();
     const dtInterval = `${startISO}/${endISO}`;
-
-    // Параметр x должен быть JSON-массивом с объектом, содержащим dt_interval
     const xParam = JSON.stringify([{ dt_interval: dtInterval }]);
 
-    // Формируем URL с query-параметрами
     const url = new URL('/api/trends', window.location.origin);
     url.searchParams.append('x', xParam);
     url.searchParams.append('y', column);
@@ -84,15 +120,13 @@ async function loadData() {
             console.log('Запрос отменён');
         } else {
             console.error('Ошибка загрузки:', err);
-            alert('Не удалось загрузить данные: ' + err.message);
+            if (!online) {
+                alert('Не удалось загрузить данные: ' + err.message);
+            }
         }
     }
 }
 
-/**
- * Обновляет график новыми данными.
- * Ожидается, что каждая точка данных содержит поле send_time в формате ISO и поле value.
- */
 function updateChart(data, yColumn) {
     if (!data || data.length === 0) {
         if (chart) {
@@ -103,13 +137,12 @@ function updateChart(data, yColumn) {
         return;
     }
 
-    // Преобразуем полученные данные в формат, понятный Chart.js (x: Date, y: число)
     const points = data
         .map(item => ({
-            x: new Date(item.send_time), // send_time должен быть в ISO
+            x: new Date(item.send_time),
             y: item.value
         }))
-        .sort((a, b) => a.x - b.x); // сортируем по времени на всякий случай
+        .sort((a, b) => a.x - b.x);
 
     if (!chart) {
         const ctx = document.getElementById('trendChart').getContext('2d');
@@ -132,7 +165,7 @@ function updateChart(data, yColumn) {
                 maintainAspectRatio: false,
                 scales: {
                     x: {
-                        type: 'time',          // временная шкала
+                        type: 'time',
                         time: {
                             unit: 'hour',
                             displayFormats: { hour: 'dd MMM HH:mm' },
