@@ -1,195 +1,165 @@
-const baseUrl = 'http://localhost:3000';
-let chart = null;
-let currentData = [];
+document.addEventListener('DOMContentLoaded', init);
 
-// Инициализация графика
-function initChart() {
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    
-    if (chart) {
-        chart.destroy();
+let chart;
+let abortController = null;
+
+function init() {
+    // Устанавливаем даты: начало = 2024-01-15 00:00, конец = сейчас
+    setDefaultDates();
+
+    document.getElementById('load-btn').addEventListener('click', loadData);
+    loadData();
+}
+
+function setDefaultDates() {
+    // Начало: 15 января 2024 года, 00:00 (локальное время)
+    const startDate = new Date(2024, 0, 15, 0, 0, 0); // Месяцы: 0 = январь
+    // Конец: текущие дата и время
+    const endDate = new Date();
+
+    document.getElementById('start').value = formatDateTimeLocal(startDate);
+    document.getElementById('end').value = formatDateTimeLocal(endDate);
+}
+
+function formatDateTimeLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+/**
+ * Загружает данные с сервера и обновляет график.
+ * Используется AbortController для отмены предыдущего запроса.
+ */
+async function loadData() {
+    // Отмена предыдущего запроса
+    if (abortController) {
+        abortController.abort();
     }
-    
-    chart = new Chart(ctx, {
-        type: 'scatter',
-        data: {
-            datasets: [{
-                label: 'Значения по времени',
-                data: [],
-                backgroundColor: 'rgba(102, 126, 234, 0.6)',
-                borderColor: 'rgba(102, 126, 234, 1)',
-                borderWidth: 1,
-                pointRadius: 5,
-                pointHoverRadius: 8
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: 'XY график трендов (Время vs Значение)',
-                    font: { size: 16 }
+    abortController = new AbortController();
+
+    const column = document.getElementById('column').value;
+    const startInput = document.getElementById('start').value;
+    const endInput = document.getElementById('end').value;
+    const online = document.getElementById('online').checked;
+
+    // Преобразуем строки из input в объекты Date (интерпретируются как локальное время)
+    const startDate = new Date(startInput + ':00');
+    const endDate = new Date(endInput + ':00');
+
+    if (isNaN(startDate) || isNaN(endDate)) {
+        alert('Пожалуйста, укажите корректные даты');
+        return;
+    }
+
+    // Формируем интервал в формате ISO (UTC)
+    const startISO = startDate.toISOString();
+    const endISO = endDate.toISOString();
+    const dtInterval = `${startISO}/${endISO}`;
+
+    // Параметр x должен быть JSON-массивом с объектом, содержащим dt_interval
+    const xParam = JSON.stringify([{ dt_interval: dtInterval }]);
+
+    // Формируем URL с query-параметрами
+    const url = new URL('/api/trends', window.location.origin);
+    url.searchParams.append('x', xParam);
+    url.searchParams.append('y', column);
+    url.searchParams.append('online', online ? 'true' : 'false');
+
+    try {
+        const response = await fetch(url, { signal: abortController.signal });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Ошибка HTTP: ${response.status}`);
+        }
+
+        const result = await response.json();
+        updateChart(result.data, column);
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            console.log('Запрос отменён');
+        } else {
+            console.error('Ошибка загрузки:', err);
+            alert('Не удалось загрузить данные: ' + err.message);
+        }
+    }
+}
+
+/**
+ * Обновляет график новыми данными.
+ * Ожидается, что каждая точка данных содержит поле send_time в формате ISO и поле value.
+ */
+function updateChart(data, yColumn) {
+    if (!data || data.length === 0) {
+        if (chart) {
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+        }
+        return;
+    }
+
+    // Преобразуем полученные данные в формат, понятный Chart.js (x: Date, y: число)
+    const points = data
+        .map(item => ({
+            x: new Date(item.send_time), // send_time должен быть в ISO
+            y: item.value
+        }))
+        .sort((a, b) => a.x - b.x); // сортируем по времени на всякий случай
+
+    if (!chart) {
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: yColumn,
+                    data: points,
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',          // временная шкала
+                        time: {
+                            unit: 'hour',
+                            displayFormats: { hour: 'dd MMM HH:mm' },
+                            tooltipFormat: 'dd MMM yyyy HH:mm'
+                        },
+                        title: { display: true, text: 'Время' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: yColumn }
+                    }
                 },
-                tooltip: {
-                    callbacks: {
-                        label: (context) => {
-                            const point = context.raw;
-                            return [
-                                `ID: ${point.id}`,
-                                `Время: ${point.send_time}`,
-                                `Значение: ${point.value}`,
-                                `Время выполнения: ${point.execution_time_ms}ms`
-                            ];
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                const val = context.raw.y;
+                                return `${yColumn}: ${val}`;
+                            }
                         }
                     }
                 }
-            },
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: 'hour',
-                        displayFormats: { hour: 'dd.MM HH:mm' },
-                        tooltipFormat: 'dd.MM.yyyy HH:mm:ss'
-                    },
-                    title: {
-                        display: true,
-                        text: 'Время отправки'
-                    }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Значение'
-                    },
-                    beginAtZero: true
-                }
             }
-        }
-    });
-}
-
-// Загрузка данных
-async function loadData(limit = 10) {
-    const sourceSpan = document.getElementById('dataSource');
-    sourceSpan.textContent = 'Загрузка...';
-    
-    try {
-        const response = await fetch(`${baseUrl}/api/data?limit=${limit}`);
-        const result = await response.json();
-        
-        currentData = result.data;
-        
-        // Обновляем источник данных
-        const source = result.source === 'postgresql' ? 'PostgreSQL' : 'Тестовые данные';
-        sourceSpan.textContent = `Источник: ${source} (${currentData.length} записей)`;
-        
-        // Обновляем статистику
-        updateStats(currentData);
-        
-        // Обновляем график
-        updateChart(currentData);
-        
-        // Обновляем таблицу
-        updateTable(currentData);
-        
-    } catch (error) {
-        console.error('Ошибка загрузки:', error);
-        sourceSpan.textContent = 'Ошибка загрузки';
+        });
+    } else {
+        chart.data.datasets[0].label = yColumn;
+        chart.data.datasets[0].data = points;
+        chart.update();
     }
 }
-
-// Загрузка больше данных
-function loadMoreData() {
-    loadData(50);
-}
-
-// Обновление статистики
-function updateStats(data) {
-    if (!data || data.length === 0) return;
-    
-    document.getElementById('totalRecords').textContent = data.length;
-    
-    const avgValue = (data.reduce((sum, item) => sum + item.value, 0) / data.length).toFixed(2);
-    document.getElementById('avgValue').textContent = avgValue;
-    
-    const avgTime = Math.round(data.reduce((sum, item) => sum + (item.execution_time_ms || 0), 0) / data.length);
-    document.getElementById('avgTime').textContent = `${avgTime} ms`;
-    
-    if (data.length > 0) {
-        const dates = data.map(item => new Date(item.send_time));
-        const minDate = new Date(Math.min(...dates));
-        const maxDate = new Date(Math.max(...dates));
-        document.getElementById('dateRange').textContent = 
-            `${minDate.toLocaleDateString()} - ${maxDate.toLocaleDateString()}`;
-    }
-}
-
-// Обновление графика
-function updateChart(data) {
-    if (!chart) {
-        initChart();
-    }
-    
-    const showTimeMs = document.getElementById('showTimeMs').checked;
-    
-    // Подготавливаем данные для графика
-    const chartData = data.map(item => ({
-        x: new Date(item.send_time),
-        y: item.value,
-        id: item.id,
-        send_time: item.send_time,
-        execution_time_ms: item.execution_time_ms,
-        size: showTimeMs ? Math.max(3, Math.min(15, item.execution_time_ms / 50)) : 5
-    }));
-    
-    // Основной датасет
-    chart.data.datasets[0].data = chartData;
-    chart.data.datasets[0].pointRadius = chartData.map(d => d.size);
-    chart.data.datasets[0].backgroundColor = chartData.map(d => 
-        d.execution_time_ms > 500 ? 'rgba(220, 53, 69, 0.6)' : 'rgba(102, 126, 234, 0.6)'
-    );
-    
-    chart.update();
-}
-
-// Обновление таблицы
-function updateTable(data) {
-    const tbody = document.getElementById('dataTableBody');
-    
-    if (!data || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="loading">Нет данных</td></tr>';
-        return;
-    }
-    
-    tbody.innerHTML = data.map(item => {
-        let statusClass = '';
-        if (item.status) {
-            statusClass = `status-${item.status}`;
-        }
-        
-        return `
-            <tr>
-                <td><span class="${statusClass}">#${item.id}</span></td>
-                <td>${item.send_time}</td>
-                <td><strong>${item.value}</strong></td>
-                <td>${item.execution_time_ms || 0} ms</td>
-            </tr>
-        `;
-    }).join('');
-}
-
-// Обновление опций графика
-function updateChartOptions() {
-    if (currentData.length > 0) {
-        updateChart(currentData);
-    }
-}
-
-// Инициализация при загрузке
-window.addEventListener('load', () => {
-    initChart();
-    loadData();
-});

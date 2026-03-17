@@ -39,6 +39,8 @@ async function testPostgresConnection() {
         
         if (tableExists.rows[0].exists) {
             console.log('Таблица data_transmissions найдена');
+        } else {
+            console.warn('Таблица data_transmissions не существует');
         }
         
         client.release();
@@ -63,80 +65,127 @@ app.get('/api/test', (req, res) => {
     });
 });
 
-app.get('/api/data', async (req, res) => {
-    const limit = parseInt(req.query.limit) || 10;
-    
+app.get('/api/trends', async (req, res) => {
+    if (!pool) {
+        return res.status(500).json({
+            success: false,
+            error: 'База данных недоступна',
+            timestamp: new Date().toISOString()
+        });
+    }
+
     try {
-        if (pool) {
-            const client = await pool.connect();
-            const result = await client.query(`
-                SELECT id, send_time, value, execution_time_ms
-                FROM data_transmissions 
-                ORDER BY send_time DESC 
-                LIMIT $1
-            `, [limit]);
-            client.release();
-            
-            const data = result.rows.map(row => ({
-                id: row.id,
-                send_time: new Date(row.send_time).toLocaleString('ru-RU'),
-                value: row.value,
-                execution_time_ms: row.execution_time_ms,
-                status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
-            }));
-            
-            res.json({
-                success: true,
-                source: 'postgresql',
-                count: data.length,
-                timestamp: new Date().toISOString(),
-                data: data
-            });
-        } else {
-            const testData = generateTestData(limit);
-            
-            res.json({
-                success: true,
-                source: 'test',
-                count: testData.length,
-                timestamp: new Date().toISOString(),
-                data: testData
+        const { x, y = 'value', online = 'false' } = req.query;
+
+        if (!x) {
+            return res.status(400).json({
+                success: false,
+                error: 'Не указан параметр x (интервал дат)',
+                timestamp: new Date().toISOString()
             });
         }
-    } catch (error) {
-        console.log('Ошибка:', error.message);
-        
-        const testData = generateTestData(limit);
+
+        let intervals;
+        try {
+            intervals = JSON.parse(x);
+            if (!Array.isArray(intervals) || intervals.length === 0) {
+                throw new Error('x должен быть непустым массивом');
+            }
+        } catch (e) {
+            return res.status(400).json({
+                success: false,
+                error: 'Параметр x должен быть валидным JSON-массивом',
+                details: e.message,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        const intervalObj = intervals[0];
+        if (!intervalObj.dt_interval || typeof intervalObj.dt_interval !== 'string') {
+            return res.status(400).json({
+                success: false,
+                error: 'Каждый объект интервала должен содержать строковое поле dt_interval',
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        const parts = intervalObj.dt_interval.split('/');
+        if (parts.length !== 2) {
+            return res.status(400).json({
+                success: false,
+                error: 'dt_interval должен быть в формате "start/end" (ISO даты)',
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        const start = new Date(parts[0]);
+        const end = new Date(parts[1]);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({
+                success: false,
+                error: 'Некорректный формат даты в dt_interval',
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        const allowedColumns = ['value', 'execution_time_ms'];
+        if (!allowedColumns.includes(y)) {
+            return res.status(400).json({
+                success: false,
+                error: `Недопустимая колонка для тренда. Разрешённые: ${allowedColumns.join(', ')}`,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        const isOnline = online === 'true';
+
+        const client = await pool.connect();
+        const query = `
+            SELECT 
+                id, 
+                send_time, 
+                ${y} AS value,
+                execution_time_ms
+            FROM data_transmissions
+            WHERE send_time BETWEEN $1 AND $2
+            ORDER BY send_time ASC
+        `;
+        const result = await client.query(query, [start, end]);
+        client.release();
+
+        const data = result.rows.map(row => ({
+            id: row.id,
+            send_time: row.send_time.toISOString(), // важно: используем ISO для клиента
+            value: row.value,
+            execution_time_ms: row.execution_time_ms,
+            status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
+        }));
+
         res.json({
             success: true,
-            source: 'test_fallback',
-            count: testData.length,
+            source: 'postgresql',
+            interval: {
+                start: start.toISOString(),
+                end: end.toISOString()
+            },
+            column: y,
+            online: isOnline,
+            count: data.length,
             timestamp: new Date().toISOString(),
-            data: testData
+            data: data
+        });
+
+    } catch (error) {
+        console.error('Ошибка при обработке запроса /api/trends:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Внутренняя ошибка сервера',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
-
-function generateTestData(count = 10) {
-    const data = [];
-    const now = new Date();
-    
-    for (let i = 1; i <= count; i++) {
-        const baseValue = 300 + i * 10;
-        const randomVariation = Math.floor(Math.random() * 200) - 100;
-        
-        data.push({
-            id: i,
-            send_time: new Date(now.getTime() - (count - i) * 3600000).toLocaleString('ru-RU'),
-            value: baseValue + randomVariation,
-            execution_time_ms: Math.floor(Math.random() * 300) + 50,
-            status: baseValue + randomVariation > 800 ? 'error' : 
-                   baseValue + randomVariation > 500 ? 'warning' : 'success'
-        });
-    }
-    
-    return data;
-}
 
 async function startServer() {
     console.log('Проверка PostgreSQL...');
@@ -145,6 +194,9 @@ async function startServer() {
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Сервер запущен: http://localhost:${PORT}`);
         console.log(`База данных: ${dbConnected ? 'Подключена' : 'Не подключена'}`);
+        if (!dbConnected) {
+            console.warn('Внимание: все запросы к /api/trends будут возвращать ошибку 500, так как тестовые данные отключены.');
+        }
     });
 }
 
