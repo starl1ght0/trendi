@@ -81,7 +81,7 @@ button:hover {
 
 .chart-container {
     flex: 1;
-    min-height: 0; /* необходимо для корректной работы flex */
+    min-height: 0;
     width: 100%;
     position: relative;
 }
@@ -93,4 +93,92 @@ canvas {
     background-color: white;
     border: 1px solid #eee;
     border-radius: 4px;
+}
+
+/* Контейнер для ползунка */
+.scroll-container {
+    width: 100%;
+    padding: 15px 0;  /* увеличено для более удобного нажатия */
+    background-color: #f9f9f9;
+    border-radius: 8px;
+}
+
+/* Общие стили для ползунка */
+#timeRange {
+    width: 100%;
+    cursor: pointer;
+    /* Убираем стандартный вид */
+    -webkit-appearance: none;
+    appearance: none;
+    /* Высота дорожки */
+    height: 12px;
+    /* Скругление дорожки */
+    border-radius: 6px;
+    background: #d3d3d3; /* цвет дорожки */
+    outline: none;
+}
+
+/* Стили для дорожки в WebKit (Chrome, Safari) */
+#timeRange::-webkit-slider-runnable-track {
+    height: 12px;
+    border-radius: 6px;
+    background: #d3d3d3;
+}
+
+/* Стили для бегунка в WebKit */
+#timeRange::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;       /* увеличенный размер */
+    height: 24px;
+    border-radius: 50%; /* круглая форма */
+    background: #007bff;
+    margin-top: -6px;   /* центрирование на дорожке (половина разницы высот) */
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Стили для бегунка в Firefox */
+#timeRange::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #007bff;
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Стили для дорожки в Firefox */
+#timeRange::-moz-range-track {
+    height: 12px;
+    border-radius: 6px;
+    background: #d3d3d3;
+}
+
+/* Стили для бегунка в IE/Edge (устаревшие, но на всякий случай) */
+#timeRange::-ms-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #007bff;
+    cursor: pointer;
+}
+
+#timeRange::-ms-track {
+    height: 12px;
+    border-radius: 6px;
+    background: transparent;
+    border-color: transparent;
+    color: transparent;
+}
+
+#timeRange::-ms-fill-lower {
+    background: #d3d3d3;
+    border-radius: 6px;
+}
+
+#timeRange::-ms-fill-upper {
+    background: #d3d3d3;
+    border-radius: 6px;
 }
