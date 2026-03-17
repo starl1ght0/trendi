@@ -3,43 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PostgreSQL Dashboard</title>
+    <title>PostgreSQL Dashboard - Тренды</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Chart.js для графиков -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- date-fns для форматирования дат -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>PostgreSQL Dashboard</h1>
+        <h1>📊 PostgreSQL Dashboard - Тренды</h1>
         
-        <div class="test-section">
-            <h2>Проверка сервера</h2>
-            
-            <button class="btn btn-success" onclick="checkServer()">
-                Проверить сервер
-            </button>
-            
-            <div id="serverResult" class="result">
-                Нажмите кнопку для проверки...
+        <div class="controls">
+            <button class="btn btn-success" onclick="loadData()">🔄 Загрузить данные</button>
+            <button class="btn" onclick="loadMoreData()">📈 Загрузить больше (50)</button>
+            <span id="dataSource" class="data-source-badge">Источник: не загружено</span>
+        </div>
+
+        <div class="stats-panel">
+            <div class="stat-card">
+                <span class="stat-label">Всего записей:</span>
+                <span id="totalRecords" class="stat-value">0</span>
             </div>
-            
-            <div id="serverStatus" class="status">
-                Не проверено
+            <div class="stat-card">
+                <span class="stat-label">Среднее значение:</span>
+                <span id="avgValue" class="stat-value">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Среднее время:</span>
+                <span id="avgTime" class="stat-value">0 ms</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Диапазон дат:</span>
+                <span id="dateRange" class="stat-value">-</span>
             </div>
         </div>
         
-        <div class="test-section">
-            <h2>Проверка PostgreSQL</h2>
-            
-            <button class="btn" onclick="checkPostgreSQL()" style="background: #17a2b8;">
-                Проверить подключение к БД
-            </button>
-            
-            <div id="dbResult" class="result">
-                Статус подключения к БД появится здесь...
-            </div>
-            
-            <div id="dbStatus" class="status">
-                Не проверено
-            </div>
+        <div class="chart-container">
+            <canvas id="trendChart"></canvas>
+        </div>
+
+        <div class="chart-controls">
+            <label>
+                <input type="checkbox" id="showTimeMs" checked onchange="updateChartOptions()">
+                Размер по времени выполнения (ms)
+            </label>
+            <label>
+                <input type="checkbox" id="showTrendLine" onchange="updateChartOptions()">
+                Показать линию тренда
+            </label>
+            <label>
+                <input type="checkbox" id="showOutliers" onchange="updateChartOptions()">
+                Показать выбросы
+            </label>
+        </div>
+        
+        <div class="data-table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Время отправки</th>
+                        <th>Значение</th>
+                        <th>Время выполнения (ms)</th>
+                    </tr>
+                </thead>
+                <tbody id="dataTableBody">
+                    <tr><td colspan="4" class="loading">Нажмите "Загрузить данные" для начала</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 

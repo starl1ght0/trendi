@@ -38,7 +38,7 @@ async function testPostgresConnection() {
         `);
         
         if (tableExists.rows[0].exists) {
-            console.log('Таблица найдена');
+            console.log('Таблица data_transmissions найдена');
         }
         
         client.release();
@@ -49,6 +49,10 @@ async function testPostgresConnection() {
         return false;
     }
 }
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.get('/api/test', (req, res) => {
     res.json({
@@ -66,15 +70,19 @@ app.get('/api/data', async (req, res) => {
         if (pool) {
             const client = await pool.connect();
             const result = await client.query(`
-                SELECT * FROM data_transmissions 
+                SELECT id, send_time, value, execution_time_ms
+                FROM data_transmissions 
                 ORDER BY send_time DESC 
                 LIMIT $1
             `, [limit]);
             client.release();
             
             const data = result.rows.map(row => ({
-                ...row,
-                send_time: new Date(row.send_time).toLocaleString('ru-RU')
+                id: row.id,
+                send_time: new Date(row.send_time).toLocaleString('ru-RU'),
+                value: row.value,
+                execution_time_ms: row.execution_time_ms,
+                status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
             }));
             
             res.json({
@@ -114,12 +122,16 @@ function generateTestData(count = 10) {
     const now = new Date();
     
     for (let i = 1; i <= count; i++) {
+        const baseValue = 300 + i * 10;
+        const randomVariation = Math.floor(Math.random() * 200) - 100;
+        
         data.push({
             id: i,
-            send_time: new Date(now.getTime() - i * 60000).toLocaleString('ru-RU'),
-            value: Math.floor(Math.random() * 1000) + 100,
-            execution_time_ms: Math.floor(Math.random() * 500) + 50,
-            status: ['success', 'warning', 'error'][Math.floor(Math.random() * 3)]
+            send_time: new Date(now.getTime() - (count - i) * 3600000).toLocaleString('ru-RU'),
+            value: baseValue + randomVariation,
+            execution_time_ms: Math.floor(Math.random() * 300) + 50,
+            status: baseValue + randomVariation > 800 ? 'error' : 
+                   baseValue + randomVariation > 500 ? 'warning' : 'success'
         });
     }
     
