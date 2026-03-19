@@ -10,20 +10,140 @@ let currentData = [];          // последние загруженные то
 let totalMinTime = null;
 let totalMaxTime = null;
 let windowDuration = null;     // длительность видимого окна в мс
-const MAX_VISIBLE_POINTS = 50; // максимальное количество точек на экране без скролла
+const MAX_VISIBLE_POINTS = 30; // максимальное количество точек на экране без скролла
+
+// Контейнер для кастомных линий
+let linesContainer = null;
 
 function init() {
     setDefaultDates();
     const onlineCheckbox = document.getElementById('online');
     onlineCheckbox.checked = true; // ONLINE ВКЛЮЧЕН ПО УМОЛЧАНИЮ
+    
+    // Создаём контейнер для линий
+    createLinesContainer();
+    
+    // Обработчик для кнопки настроек
+    document.getElementById('toggle-settings').addEventListener('click', toggleSettings);
+    
+    // Обработчики для фиксированных элементов
     document.getElementById('load-btn').addEventListener('click', () => {
         loadData();
     });
     onlineCheckbox.addEventListener('change', onOnlineToggle);
+    
+    // Обработчик для изменения цвета линии
+    document.getElementById('line-color').addEventListener('change', () => {
+        // Если есть данные, обновляем цвет графика
+        if (chart && currentData.length > 0) {
+            updateChartCurrentColor();
+        }
+    });
+    
+    // Обработчик для включения/отключения пунктирных линий
+    document.getElementById('show-gridlines').addEventListener('change', () => {
+        updateGridLines();
+    });
+    
     // Ползунок
     document.getElementById('timeRange').addEventListener('input', onRangeChange);
+    
     // Запускаем polling (включая первую загрузку)
     onOnlineToggle();
+}
+
+// Создание контейнера для кастомных линий
+function createLinesContainer() {
+    const chartContainer = document.querySelector('.chart-container');
+    if (chartContainer) {
+        linesContainer = document.createElement('div');
+        linesContainer.className = 'custom-lines-container';
+        chartContainer.appendChild(linesContainer);
+    }
+}
+
+// Обновление пунктирных линий
+function updateGridLines() {
+    if (!linesContainer || !chart || !currentData.length) return;
+    
+    const showLines = document.getElementById('show-gridlines').checked;
+    linesContainer.innerHTML = ''; // очищаем старые линии
+    
+    if (!showLines) return;
+    
+    const canvas = document.getElementById('trendChart');
+    const rect = canvas.getBoundingClientRect();
+    const chartArea = chart.chartArea;
+    
+    if (!chartArea || rect.width === 0) return;
+    
+    // Получаем текущие индексы видимых точек
+    const visibleIndices = getVisibleIndices();
+    
+    // Для каждой видимой точки создаём линию
+    visibleIndices.forEach(index => {
+        const point = currentData[index];
+        
+        // Конвертируем индекс в координату X (равномерное распределение)
+        const totalVisiblePoints = visibleIndices.length;
+        const pointPosition = visibleIndices.indexOf(index) / (totalVisiblePoints - 1);
+        const xPos = chartArea.left + pointPosition * (chartArea.right - chartArea.left);
+        
+        // Создаём линию
+        const line = document.createElement('div');
+        line.className = 'time-grid-line';
+        line.style.left = xPos + 'px';
+        line.style.top = chartArea.top + 'px';
+        line.style.height = (chartArea.bottom - chartArea.top) + 'px';
+        linesContainer.appendChild(line);
+        
+        // Создаём метку времени
+        const marker = document.createElement('div');
+        marker.className = 'time-marker';
+        marker.style.left = xPos + 'px';
+        
+        const date = new Date(point.x);
+        marker.textContent = date.toLocaleString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        
+        linesContainer.appendChild(marker);
+    });
+}
+
+// Получение индексов видимых точек
+function getVisibleIndices() {
+    if (!currentData.length) return [];
+    
+    if (windowDuration === null) {
+        // Показываем все точки
+        return currentData.map((_, index) => index);
+    } else {
+        // Показываем точки в текущем окне
+        const leftTime = chart.scales.x.min;
+        const rightTime = chart.scales.x.max;
+        
+        return currentData
+            .map((point, index) => ({ point, index }))
+            .filter(item => item.point.x >= leftTime && item.point.x <= rightTime)
+            .map(item => item.index);
+    }
+}
+
+// Функция для обновления цвета текущего графика
+function updateChartCurrentColor() {
+    if (!chart) return;
+    const color = document.getElementById('line-color').value;
+    chart.data.datasets[0].borderColor = color;
+    chart.data.datasets[0].backgroundColor = color + '33'; // добавляем прозрачность 20%
+    chart.update();
+}
+
+function toggleSettings() {
+    const panel = document.getElementById('settings-panel');
+    panel.classList.toggle('hidden');
 }
 
 function setDefaultDates() {
@@ -141,16 +261,20 @@ function updateDataAndScroll(newData, yColumn) {
     if (!newData || newData.length === 0) {
         // Если данных нет, скрываем скролл и очищаем график
         document.getElementById('scrollContainer').style.display = 'none';
-        updateChart([], yColumn);
+        updateChartWithUniformSpacing([], yColumn);
         currentData = [];
+        updateTimeScale(null, null);
+        if (linesContainer) linesContainer.innerHTML = '';
         return;
     }
 
     // Преобразуем в точки с временем в мс и сортируем
+    // Сохраняем execution_time_ms из оригинальных данных
     const points = newData
         .map(item => ({
             x: new Date(item.send_time).getTime(),
             y: item.value,
+            executionTime: item.execution_time_ms, // Сохраняем execution_time_ms
             original: item
         }))
         .sort((a, b) => a.x - b.x);
@@ -191,8 +315,7 @@ function updateDataAndScroll(newData, yColumn) {
 
         // Если график ещё не создан, создаём его со всеми данными (для инициализации)
         if (!chart) {
-            const allPoints = points.map(p => ({ x: new Date(p.x), y: p.y }));
-            updateChart(allPoints, yColumn);
+            updateChartWithUniformSpacing(points, yColumn);
         }
 
         // Применяем видимое окно
@@ -201,43 +324,167 @@ function updateDataAndScroll(newData, yColumn) {
         // Скрываем скролл, показываем все данные
         document.getElementById('scrollContainer').style.display = 'none';
         windowDuration = null;
-        // Сбрасываем мин/макс оси (auto)
-        if (chart) {
-            chart.options.scales.x.min = undefined;
-            chart.options.scales.x.max = undefined;
-        }
         // Обновляем график со всеми точками
-        const chartPoints = points.map(p => ({ x: new Date(p.x), y: p.y }));
-        updateChart(chartPoints, yColumn);
+        updateChartWithUniformSpacing(points, yColumn);
+        updateTimeScale(totalMinTime, totalMaxTime);
     }
 }
 
-function applyVisibleWindow(percent, yColumn) {
-    if (!chart || !currentData.length || windowDuration === null) return;
+// Функция для обновления графика с равномерным расположением точек
+function updateChartWithUniformSpacing(points, yColumn) {
+    if (!points || points.length === 0) {
+        if (chart) {
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+        }
+        return;
+    }
 
+    // Получаем выбранный цвет
+    const lineColor = document.getElementById('line-color').value;
+    // Создаём полупрозрачный цвет для заливки (20% прозрачности)
+    const fillColor = lineColor + '33';
+
+    // Создаём массив подписей для оси X (время)
+    const labels = points.map(point => {
+        const date = new Date(point.x);
+        return date.toLocaleString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    });
+
+    // Сохраняем executionTime для использования в тултипе
+    const executionTimes = points.map(point => point.executionTime);
+
+    if (!chart) {
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: yColumn,
+                    data: points.map(p => p.y),
+                    borderColor: lineColor,
+                    backgroundColor: fillColor,
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        type: 'category',
+                        title: { display: true, text: 'Время' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: yColumn }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                const val = context.raw;
+                                const timeStr = labels[context.dataIndex];
+                                const execTime = executionTimes[context.dataIndex];
+                                const lines = [
+                                    `${yColumn}: ${val}`,
+                                    `Время: ${timeStr}`
+                                ];
+                                // Добавляем execution_time_ms, если оно есть
+                                if (execTime !== undefined && execTime !== null) {
+                                    lines.push(`Выполнено за: ${execTime} ms`);
+                                }
+                                return lines;
+                            },
+                            title: () => '' // убираем стандартный заголовок
+                        }
+                    }
+                }
+            }
+        });
+        
+        // После создания графика обновляем линии
+        setTimeout(updateGridLines, 100);
+    } else {
+        chart.data.labels = labels;
+        chart.data.datasets[0].label = yColumn;
+        chart.data.datasets[0].data = points.map(p => p.y);
+        chart.data.datasets[0].borderColor = lineColor;
+        chart.data.datasets[0].backgroundColor = fillColor;
+        
+        // Обновляем executionTimes для нового датасета
+        // (сохраняем в пользовательском свойстве или пересоздаём тултип)
+        chart.update();
+        
+        // Обновляем линии
+        setTimeout(updateGridLines, 50);
+    }
+    
+    // Сохраняем executionTimes в глобальной переменной для доступа из тултипа
+    // (альтернативно можно использовать пользовательское свойство датасета)
+    window.__executionTimes = executionTimes;
+}
+
+// Функция для получения точек в текущем окне с плавным скроллом
+function getPointsInWindow(percent) {
+    if (!currentData.length || windowDuration === null) return [];
+    
     const totalDuration = totalMaxTime - totalMinTime;
     const maxLeft = totalDuration - windowDuration;
     let leftTime;
+    
     if (maxLeft <= 0) {
         leftTime = totalMinTime;
     } else {
         leftTime = totalMinTime + (percent / 100) * maxLeft;
     }
     const rightTime = leftTime + windowDuration;
+    
+    // Получаем все точки в интервале
+    const allInWindow = currentData.filter(p => p.x >= leftTime && p.x <= rightTime);
+    
+    // Если точек больше MAX_VISIBLE_POINTS, равномерно выбираем MAX_VISIBLE_POINTS точек
+    if (allInWindow.length > MAX_VISIBLE_POINTS) {
+        const step = allInWindow.length / MAX_VISIBLE_POINTS;
+        const selected = [];
+        for (let i = 0; i < MAX_VISIBLE_POINTS; i++) {
+            const index = Math.floor(i * step);
+            selected.push(allInWindow[index]);
+        }
+        return selected;
+    }
+    
+    return allInWindow;
+}
 
-    // Устанавливаем min и max на оси X
-    chart.options.scales.x.min = leftTime;
-    chart.options.scales.x.max = rightTime;
+function applyVisibleWindow(percent, yColumn) {
+    if (!currentData.length || windowDuration === null) return;
 
-    // Фильтруем данные, попадающие в окно (для отображения)
-    const visiblePoints = currentData
-        .filter(p => p.x >= leftTime && p.x <= rightTime)
-        .map(p => ({ x: new Date(p.x), y: p.y }));
+    // Получаем точки для отображения с равномерным распределением
+    const visiblePoints = getPointsInWindow(percent);
+    
+    if (visiblePoints.length === 0) return;
 
-    // Обновляем dataset
-    chart.data.datasets[0].label = yColumn;
-    chart.data.datasets[0].data = visiblePoints;
-    chart.update();
+    // Получаем временные границы для шкалы
+    const leftTime = Math.min(...visiblePoints.map(p => p.x));
+    const rightTime = Math.max(...visiblePoints.map(p => p.x));
+
+    // Обновляем график с видимыми точками
+    updateChartWithUniformSpacing(visiblePoints, yColumn);
+    
+    // Обновляем временную шкалу
+    updateTimeScale(leftTime, rightTime);
 }
 
 function onRangeChange(e) {
@@ -252,71 +499,38 @@ function onRangeChange(e) {
     applyVisibleWindow(percent, yColumn);
 }
 
-function updateChart(points, yColumn) {
-    if (!points || points.length === 0) {
-        if (chart) {
-            chart.data.labels = [];
-            chart.data.datasets[0].data = [];
-            chart.update();
-        }
-        return;
-    }
-
-    if (!chart) {
-        const ctx = document.getElementById('trendChart').getContext('2d');
-        chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                datasets: [{
-                    label: yColumn,
-                    data: points,
-                    borderColor: 'rgb(75, 192, 192)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    tension: 0.1,
-                    pointRadius: 3,
-                    pointHoverRadius: 5,
-                    fill: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            unit: 'hour',
-                            displayFormats: { hour: 'dd MMM HH:mm' },
-                            tooltipFormat: 'dd MMM yyyy HH:mm'
-                        },
-                        title: { display: true, text: 'Время' }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: yColumn }
-                    }
-                },
-                plugins: {
-                    tooltip: {
-                        callbacks: {
-                            label: (context) => {
-                                const val = context.raw.y;
-                                return `${yColumn}: ${val}`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
+// Функция обновления временной шкалы под графиком
+function updateTimeScale(startTime, endTime) {
+    const startEl = document.getElementById('timeStart');
+    const endEl = document.getElementById('timeEnd');
+    
+    if (!startEl || !endEl) return;
+    
+    if (startTime && endTime) {
+        const startDate = new Date(startTime);
+        const endDate = new Date(endTime);
+        
+        // Форматируем даты с учётом локали
+        const formatOptions = {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        };
+        
+        startEl.textContent = startDate.toLocaleString('ru-RU', formatOptions);
+        endEl.textContent = endDate.toLocaleString('ru-RU', formatOptions);
     } else {
-        chart.data.datasets[0].label = yColumn;
-        chart.data.datasets[0].data = points;
-        // Если скролл неактивен, убедимся что min/max сброшены
-        if (windowDuration === null) {
-            chart.options.scales.x.min = undefined;
-            chart.options.scales.x.max = undefined;
-        }
-        chart.update();
+        startEl.textContent = '—';
+        endEl.textContent = '—';
     }
 }
+
+// Добавляем обработчик изменения размера окна для обновления линий
+window.addEventListener('resize', () => {
+    if (chart && currentData.length > 0) {
+        setTimeout(updateGridLines, 100);
+    }
+});
