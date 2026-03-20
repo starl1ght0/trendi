@@ -3,9 +3,10 @@ document.addEventListener('DOMContentLoaded', init);
 let chart;
 let abortController = null;
 let pollingInterval = null;
-const POLLING_INTERVAL_MS = 5000;
+const POLLING_INTERVAL_MS = 3000;
 
-let currentData = [];
+let currentData = [];              // все загруженные точки (в формате {x, y, executionTime})
+let rawData = [];                  // исходные данные от сервера (с send_time, value, execution_time_ms)
 const MAX_VISIBLE_POINTS = 30;
 let currentVisiblePoints = [];
 
@@ -21,12 +22,53 @@ function init() {
         if (chart && currentVisiblePoints.length) updateChartCurrentColor();
     });
 
+    // Обработчик изменения колонки Y
+    document.getElementById('column').addEventListener('change', () => {
+        if (rawData.length) {
+            rebuildFromRawData();
+        }
+    });
+
     const timeRange = document.getElementById('timeRange');
     timeRange.addEventListener('input', onRangeChange);
-    // Предотвращаем стандартное перетаскивание, чтобы избежать перечёркнутого курсора
     timeRange.addEventListener('dragstart', (e) => e.preventDefault());
 
     onOnlineToggle();
+}
+
+// Перестроить точки из rawData с учётом выбранной колонки
+function rebuildFromRawData() {
+    if (!rawData.length) return;
+
+    const column = document.getElementById('column').value;
+    const points = rawData.map(item => ({
+        x: new Date(item.send_time).getTime(),
+        y: column === 'execution_time_ms' ? item.execution_time_ms : item.value,
+        executionTime: item.execution_time_ms,
+        original: item
+    })).sort((a, b) => a.x - b.x);
+
+    currentData = points;
+
+    const totalPoints = currentData.length;
+    if (totalPoints > MAX_VISIBLE_POINTS) {
+        document.getElementById('scrollContainer').style.display = 'block';
+
+        const rangeInput = document.getElementById('timeRange');
+        rangeInput.min = 0;
+        rangeInput.max = 100;
+
+        const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
+        let percent = parseFloat(rangeInput.value);
+        if (isNaN(percent)) percent = 100;
+
+        const startIndex = Math.round((percent / 100) * maxStartIndex);
+        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
+        updateChartWithUniformSpacing(visiblePoints, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
+    } else {
+        document.getElementById('scrollContainer').style.display = 'none';
+        updateChartWithUniformSpacing(currentData, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
+    }
 }
 
 function updateChartCurrentColor() {
@@ -129,55 +171,19 @@ async function loadData() {
             throw new Error(errorData.error || `Ошибка HTTP: ${response.status}`);
         }
         const result = await response.json();
-        updateDataAndScroll(result.data, column);
+
+        // Сохраняем сырые данные
+        rawData = result.data.map(item => ({
+            send_time: item.send_time,
+            value: item.value,
+            execution_time_ms: item.execution_time_ms
+        }));
+
+        rebuildFromRawData(); // перестраиваем график на основе выбранной колонки
     } catch (err) {
         if (err.name === 'AbortError') return;
         console.error('Ошибка загрузки:', err);
         if (!online) alert('Не удалось загрузить данные: ' + err.message);
-    }
-}
-
-function updateDataAndScroll(newData, yColumn) {
-    if (!newData || newData.length === 0) {
-        document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing([], yColumn);
-        currentData = [];
-        currentVisiblePoints = [];
-        return;
-    }
-
-    const points = newData
-        .map(item => ({
-            x: new Date(item.send_time).getTime(),
-            y: item.value,
-            executionTime: item.execution_time_ms,
-            original: item
-        }))
-        .sort((a, b) => a.x - b.x);
-
-    currentData = points;
-
-    const totalPoints = currentData.length;
-
-    if (totalPoints > MAX_VISIBLE_POINTS) {
-        document.getElementById('scrollContainer').style.display = 'block';
-
-        const rangeInput = document.getElementById('timeRange');
-        rangeInput.min = 0;
-        rangeInput.max = 100;
-
-        // По умолчанию показываем последние 30 точек (скролл справа)
-        const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-        let percent = 100;
-        rangeInput.value = percent;
-
-        const startIndex = Math.round((percent / 100) * maxStartIndex);
-        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
-
-        updateChartWithUniformSpacing(visiblePoints, yColumn);
-    } else {
-        document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing(currentData, yColumn);
     }
 }
 
