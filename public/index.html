@@ -13,7 +13,6 @@
             <h1>Тренды данных</h1>
         </div>
         
-        <!-- Фиксированная строка с Online и Обновить -->
         <div class="fixed-controls">
             <div class="control-group inline">
                 <label for="online">Online:</label>
@@ -22,7 +21,6 @@
             <button id="load-btn">Обновить график</button>
         </div>
         
-        <!-- Выпадающая панель с остальными настройками -->
         <div id="settings-panel" class="settings-panel hidden">
             <div class="controls">
                 <div class="control-group">
@@ -50,11 +48,6 @@
                         <option value="#9966ff">Фиолетовый</option>
                     </select>
                 </div>
-                <!-- Новый чекбокс для пунктирных линий -->
-                <div class="control-group">
-                    <label for="show-gridlines">Пунктирные линии:</label>
-                    <input type="checkbox" id="show-gridlines" checked>
-                </div>
             </div>
         </div>
 
@@ -62,19 +55,11 @@
             <canvas id="trendChart"></canvas>
         </div>
         
-        <!-- Временная шкала под графиком -->
-        <div class="time-scale" id="timeScale">
-            <span class="time-label" id="timeStart"></span>
-            <span class="time-label" id="timeEnd"></span>
-        </div>
-        
-        <!-- Контейнер для ползунка (виден только при необходимости) -->
         <div class="scroll-container" id="scrollContainer" style="display: none;">
             <input type="range" id="timeRange" min="0" max="100" value="100" step="1">
         </div>
     </div>
 
-    <!-- Библиотеки для графиков -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="script.js"></script>
