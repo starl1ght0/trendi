@@ -13,14 +13,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let pool = null;
 
+// Проверяем обязательные переменные окружения
+const requiredEnv = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
+for (const envVar of requiredEnv) {
+    if (!process.env[envVar]) {
+        console.error(`Ошибка: переменная окружения ${envVar} не задана в .env`);
+        process.exit(1);
+    }
+}
+
 async function testPostgresConnection() {
     try {
         pool = new Pool({
-            host: process.env.DB_HOST || 'localhost',
-            port: parseInt(process.env.DB_PORT) || 5432,
-            database: process.env.DB_NAME || 'trendstest',
-            user: process.env.DB_USER || 'postgres',
-            password: process.env.DB_PASSWORD || 'admin',
+            host: process.env.DB_HOST,
+            port: parseInt(process.env.DB_PORT),
+            database: process.env.DB_NAME,
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
             max: 5,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 5000
@@ -156,7 +165,7 @@ app.get('/api/trends', async (req, res) => {
 
         const data = result.rows.map(row => ({
             id: row.id,
-            send_time: row.send_time.toISOString(), // важно: используем ISO для клиента
+            send_time: row.send_time.toISOString(),
             value: row.value,
             execution_time_ms: row.execution_time_ms,
             status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
