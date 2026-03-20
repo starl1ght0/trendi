@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>График трендов</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <button id="toggle-settings" class="toggle-btn">Настройки</button>
+            <h1>График трендов</h1>
+        </div>
+        
+        <div class="fixed-controls">
+            <div class="control-group inline">
+                <label for="online">Online:</label>
+                <input type="checkbox" id="online" checked>
+            </div>
+            <button id="load-btn">Обновить график</button>
+        </div>
+        
+        <div id="settings-panel" class="settings-panel hidden">
+            <div class="controls">
+                <div class="control-group">
+                    <label for="column">Колонка Y:</label>
+                    <select id="column">
+                        <option value="value">value</option>
+                        <option value="execution_time_ms">execution_time_ms</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="start">Начало:</label>
+                    <input type="datetime-local" id="start">
+                </div>
+                <div class="control-group">
+                    <label for="end">Конец:</label>
+                    <input type="datetime-local" id="end">
+                </div>
+                <div class="control-group">
+                    <label for="line-color">Цвет графика:</label>
+                    <select id="line-color">
+                        <option value="#4dc9f6" selected>Голубой</option>
+                        <option value="#ff6384">Розовый</option>
+                        <option value="#36a2eb">Синий</option>
+                        <option value="#ffcd56">Жёлтый</option>
+                        <option value="#9966ff">Фиолетовый</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="trendChart"></canvas>
+        </div>
+        
+        <div class="scroll-container" id="scrollContainer" style="display: none;">
+            <input type="range" id="timeRange" min="0" max="100" value="100" step="1">
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
