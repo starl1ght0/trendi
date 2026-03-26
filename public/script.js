@@ -3,10 +3,10 @@ document.addEventListener('DOMContentLoaded', init);
 let chart;
 let abortController = null;
 let pollingInterval = null;
-const POLLING_INTERVAL_MS = 3000;
+const POLLING_INTERVAL_MS = 5000;
 
-let currentData = [];              // все загруженные точки (в формате {x, y, executionTime})
-let rawData = [];                  // исходные данные от сервера (с send_time, value, execution_time_ms)
+let currentData = [];
+let rawData = [];                 // исходные данные с полями dt, value, p1, p2
 const MAX_VISIBLE_POINTS = 30;
 let currentVisiblePoints = [];
 
@@ -22,11 +22,8 @@ function init() {
         if (chart && currentVisiblePoints.length) updateChartCurrentColor();
     });
 
-    // Обработчик изменения колонки Y
     document.getElementById('column').addEventListener('change', () => {
-        if (rawData.length) {
-            rebuildFromRawData();
-        }
+        if (rawData.length) rebuildFromRawData();
     });
 
     const timeRange = document.getElementById('timeRange');
@@ -36,15 +33,13 @@ function init() {
     onOnlineToggle();
 }
 
-// Перестроить точки из rawData с учётом выбранной колонки
 function rebuildFromRawData() {
     if (!rawData.length) return;
 
     const column = document.getElementById('column').value;
     const points = rawData.map(item => ({
-        x: new Date(item.send_time).getTime(),
-        y: column === 'execution_time_ms' ? item.execution_time_ms : item.value,
-        executionTime: item.execution_time_ms,
+        x: new Date(item.dt).getTime(),
+        y: column === 'value' ? item.value : (column === 'p1' ? item.p1 : item.p2),
         original: item
     })).sort((a, b) => a.x - b.x);
 
@@ -64,10 +59,10 @@ function rebuildFromRawData() {
 
         const startIndex = Math.round((percent / 100) * maxStartIndex);
         const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
-        updateChartWithUniformSpacing(visiblePoints, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
+        updateChartWithUniformSpacing(visiblePoints, column);
     } else {
         document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing(currentData, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
+        updateChartWithUniformSpacing(currentData, column);
     }
 }
 
@@ -172,14 +167,14 @@ async function loadData() {
         }
         const result = await response.json();
 
-        // Сохраняем сырые данные
         rawData = result.data.map(item => ({
-            send_time: item.send_time,
+            dt: item.dt,
             value: item.value,
-            execution_time_ms: item.execution_time_ms
+            p1: item.p1,
+            p2: item.p2
         }));
 
-        rebuildFromRawData(); // перестраиваем график на основе выбранной колонки
+        rebuildFromRawData();
     } catch (err) {
         if (err.name === 'AbortError') return;
         console.error('Ошибка загрузки:', err);
@@ -248,11 +243,7 @@ function updateChartWithUniformSpacing(points, yColumn) {
                                     minute: '2-digit',
                                     second: '2-digit'
                                 });
-                                const lines = [`${yColumn}: ${point.y}`, `Время: ${timeStr}`];
-                                if (point.executionTime !== undefined && point.executionTime !== null) {
-                                    lines.push(`execution_time_ms: ${point.executionTime}`);
-                                }
-                                return lines;
+                                return [`${yColumn}: ${point.y}`, `Время: ${timeStr}`];
                             },
                             title: () => ''
                         }

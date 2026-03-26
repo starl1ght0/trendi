@@ -10,9 +10,9 @@
     <div class="container">
         <div class="header">
             <button id="toggle-settings" class="toggle-btn">Настройки</button>
-            <h1>График трендов</h1>
+            <h1>Тренды данных</h1>
         </div>
-        
+
         <div class="fixed-controls">
             <div class="control-group inline">
                 <label for="online">Online:</label>
@@ -20,14 +20,15 @@
             </div>
             <button id="load-btn">Обновить график</button>
         </div>
-        
+
         <div id="settings-panel" class="settings-panel hidden">
             <div class="controls">
                 <div class="control-group">
                     <label for="column">Колонка Y:</label>
                     <select id="column">
                         <option value="value">value</option>
-                        <option value="execution_time_ms">execution_time_ms</option>
+                        <option value="p1">p1</option>
+                        <option value="p2">p2</option>
                     </select>
                 </div>
                 <div class="control-group">
@@ -54,7 +55,7 @@
         <div class="chart-container">
             <canvas id="trendChart"></canvas>
         </div>
-        
+
         <div class="scroll-container" id="scrollContainer" style="display: none;">
             <input type="range" id="timeRange" min="0" max="100" value="100" step="1">
         </div>

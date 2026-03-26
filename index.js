@@ -13,7 +13,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let pool = null;
 
-// Проверяем обязательные переменные окружения
 const requiredEnv = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
 for (const envVar of requiredEnv) {
     if (!process.env[envVar]) {
@@ -37,7 +36,7 @@ async function testPostgresConnection() {
 
         const client = await pool.connect();
         console.log('PostgreSQL подключен');
-        
+
         const tableExists = await client.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
@@ -45,13 +44,13 @@ async function testPostgresConnection() {
                 AND table_name = 'data_transmissions'
             )
         `);
-        
+
         if (tableExists.rows[0].exists) {
             console.log('Таблица data_transmissions найдена');
         } else {
             console.warn('Таблица data_transmissions не существует');
         }
-        
+
         client.release();
         return true;
     } catch (error) {
@@ -138,7 +137,8 @@ app.get('/api/trends', async (req, res) => {
             });
         }
 
-        const allowedColumns = ['value', 'execution_time_ms'];
+        // Разрешённые колонки для тренда (value, p1, p2)
+        const allowedColumns = ['value', 'p1', 'p2'];
         if (!allowedColumns.includes(y)) {
             return res.status(400).json({
                 success: false,
@@ -152,22 +152,24 @@ app.get('/api/trends', async (req, res) => {
         const client = await pool.connect();
         const query = `
             SELECT 
-                id, 
-                send_time, 
+                dt,
+                id,
                 ${y} AS value,
-                execution_time_ms
+                p1,
+                p2
             FROM data_transmissions
-            WHERE send_time BETWEEN $1 AND $2
-            ORDER BY send_time ASC
+            WHERE dt BETWEEN $1 AND $2
+            ORDER BY dt ASC, id ASC
         `;
         const result = await client.query(query, [start, end]);
         client.release();
 
         const data = result.rows.map(row => ({
             id: row.id,
-            send_time: row.send_time.toISOString(),
-            value: row.value,
-            execution_time_ms: row.execution_time_ms,
+            dt: row.dt.toISOString(),          // время транзакции
+            value: row.value,                  // значение выбранной колонки
+            p1: row.p1,
+            p2: row.p2,
             status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
         }));
 
@@ -199,7 +201,7 @@ app.get('/api/trends', async (req, res) => {
 async function startServer() {
     console.log('Проверка PostgreSQL...');
     const dbConnected = await testPostgresConnection();
-    
+
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Сервер запущен: http://localhost:${PORT}`);
         console.log(`База данных: ${dbConnected ? 'Подключена' : 'Не подключена'}`);
