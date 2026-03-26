@@ -4,6 +4,7 @@ let chart;
 let abortController = null;
 let pollingInterval = null;
 const POLLING_INTERVAL_MS = 30000; // 30 секунд
+const MAX_STORED_POINTS = 1000;    // максимальное количество хранимых записей
 
 let currentData = [];      // все загруженные точки (сортированные)
 let rawData = [];          // исходные данные (без преобразования в точки)
@@ -34,6 +35,15 @@ function init() {
     const timeRange = document.getElementById('timeRange');
     timeRange.addEventListener('input', onRangeChange);
     timeRange.addEventListener('dragstart', (e) => e.preventDefault());
+
+    // Debounce для полей дат
+    let debounceTimer;
+    const debounceLoad = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => fullLoadData(), 500);
+    };
+    document.getElementById('start').addEventListener('input', debounceLoad);
+    document.getElementById('end').addEventListener('input', debounceLoad);
 
     onOnlineToggle();
 }
@@ -74,7 +84,6 @@ function onOnlineToggle() {
 
 function startPolling() {
     if (pollingInterval) return;
-    // При старте автообновления сначала загружаем полные данные (если не загружены)
     if (!rawData.length) fullLoadData();
     else loadIncremental();
     pollingInterval = setInterval(() => loadIncremental(), POLLING_INTERVAL_MS);
@@ -87,7 +96,6 @@ function stopPolling() {
     }
 }
 
-// Полная загрузка всех данных за выбранный интервал
 async function fullLoadData() {
     const start = document.getElementById('start').value;
     const end = document.getElementById('end').value;
@@ -100,26 +108,20 @@ async function fullLoadData() {
     if (isNaN(startDate) || isNaN(endDate)) return;
 
     currentInterval = { start: startDate, end: endDate };
-
-    // Сбрасываем lastDt при полной загрузке
     lastDt = null;
 
     await loadData(currentInterval.start, currentInterval.end, null);
 }
 
-// Загрузка новых данных (инкрементально)
 async function loadIncremental() {
     if (!currentInterval) return;
     if (!lastDt) {
-        // Если lastDt нет, значит полная загрузка ещё не делалась
         await fullLoadData();
         return;
     }
-    // Загружаем только данные, которые новее lastDt
     await loadData(currentInterval.start, currentInterval.end, lastDt);
 }
 
-// Универсальная функция загрузки данных с сервера (с защитой от дублирования)
 async function loadData(start, end, since = null) {
     if (abortController) abortController.abort();
     abortController = new AbortController();
@@ -150,23 +152,33 @@ async function loadData(start, end, since = null) {
 
         if (result.data.length === 0) return;
 
-        // Обновляем rawData с защитой от дублирования
         if (since) {
-            // Создаём Set существующих ключей (dt + id)
+            // Инкрементальная загрузка: добавляем только новые записи
             const existingKeys = new Set(rawData.map(item => `${item.dt}_${item.id}`));
             const newUniqueData = result.data.filter(item => !existingKeys.has(`${item.dt}_${item.id}`));
             if (newUniqueData.length) {
                 rawData = [...rawData, ...newUniqueData];
                 rawData.sort((a, b) => new Date(a.dt) - new Date(b.dt));
+
+                // Ограничиваем размер хранимых данных
+                if (rawData.length > MAX_STORED_POINTS) {
+                    rawData = rawData.slice(-MAX_STORED_POINTS);
+                }
             }
         } else {
+            // Полная загрузка: заменяем rawData
             rawData = result.data;
+            if (rawData.length > MAX_STORED_POINTS) {
+                rawData = rawData.slice(-MAX_STORED_POINTS);
+            }
         }
 
-        // Обновляем lastDt (самая поздняя дата)
+        // Обновляем lastDt (самая поздняя дата) на основе текущего rawData
         if (rawData.length) {
             const lastDate = new Date(rawData[rawData.length - 1].dt);
-            if (!lastDt || lastDate > lastDt) lastDt = lastDate;
+            lastDt = lastDate;
+        } else {
+            lastDt = null;
         }
 
         rebuildFromRawData();
@@ -177,7 +189,6 @@ async function loadData(start, end, since = null) {
     }
 }
 
-// Перестроение точек из rawData с учётом выбранной колонки
 function rebuildFromRawData() {
     if (!rawData.length) {
         document.getElementById('scrollContainer').style.display = 'none';
@@ -198,15 +209,12 @@ function rebuildFromRawData() {
     const totalPoints = currentData.length;
     if (totalPoints > MAX_VISIBLE_POINTS) {
         document.getElementById('scrollContainer').style.display = 'block';
-
         const rangeInput = document.getElementById('timeRange');
         rangeInput.min = 0;
         rangeInput.max = 100;
-
         const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
         let percent = parseFloat(rangeInput.value);
         if (isNaN(percent)) percent = 100;
-
         const startIndex = Math.round((percent / 100) * maxStartIndex);
         const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
         updateChartWithUniformSpacing(visiblePoints, currentYColumn);
@@ -216,7 +224,6 @@ function rebuildFromRawData() {
     }
 }
 
-// Обновление графика с равномерным расположением точек (категориальная ось)
 function updateChartWithUniformSpacing(points, yColumn) {
     if (!points || points.length === 0) {
         if (chart) {
