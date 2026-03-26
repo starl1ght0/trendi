@@ -3,10 +3,14 @@ document.addEventListener('DOMContentLoaded', init);
 let chart;
 let abortController = null;
 let pollingInterval = null;
-const POLLING_INTERVAL_MS = 5000;
+const POLLING_INTERVAL_MS = 30000; // 30 секунд
 
-let currentData = [];
-let rawData = [];                 // исходные данные с полями dt, value, p1, p2
+let currentData = [];      // все загруженные точки (сортированные)
+let rawData = [];          // исходные данные (без преобразования в точки)
+let lastDt = null;         // максимальная дата среди загруженных данных
+let currentInterval = null; // текущий выбранный интервал { start, end }
+let currentYColumn = 'value'; // текущая колонка
+
 const MAX_VISIBLE_POINTS = 30;
 let currentVisiblePoints = [];
 
@@ -16,13 +20,14 @@ function init() {
     onlineCheckbox.checked = true;
 
     document.getElementById('toggle-settings').addEventListener('click', toggleSettings);
-    document.getElementById('load-btn').addEventListener('click', () => loadData());
+    document.getElementById('load-btn').addEventListener('click', () => fullLoadData());
     onlineCheckbox.addEventListener('change', onOnlineToggle);
     document.getElementById('line-color').addEventListener('change', () => {
         if (chart && currentVisiblePoints.length) updateChartCurrentColor();
     });
 
-    document.getElementById('column').addEventListener('change', () => {
+    document.getElementById('column').addEventListener('change', (e) => {
+        currentYColumn = e.target.value;
         if (rawData.length) rebuildFromRawData();
     });
 
@@ -31,39 +36,6 @@ function init() {
     timeRange.addEventListener('dragstart', (e) => e.preventDefault());
 
     onOnlineToggle();
-}
-
-function rebuildFromRawData() {
-    if (!rawData.length) return;
-
-    const column = document.getElementById('column').value;
-    const points = rawData.map(item => ({
-        x: new Date(item.dt).getTime(),
-        y: column === 'value' ? item.value : (column === 'p1' ? item.p1 : item.p2),
-        original: item
-    })).sort((a, b) => a.x - b.x);
-
-    currentData = points;
-
-    const totalPoints = currentData.length;
-    if (totalPoints > MAX_VISIBLE_POINTS) {
-        document.getElementById('scrollContainer').style.display = 'block';
-
-        const rangeInput = document.getElementById('timeRange');
-        rangeInput.min = 0;
-        rangeInput.max = 100;
-
-        const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-        let percent = parseFloat(rangeInput.value);
-        if (isNaN(percent)) percent = 100;
-
-        const startIndex = Math.round((percent / 100) * maxStartIndex);
-        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
-        updateChartWithUniformSpacing(visiblePoints, column);
-    } else {
-        document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing(currentData, column);
-    }
 }
 
 function updateChartCurrentColor() {
@@ -102,8 +74,10 @@ function onOnlineToggle() {
 
 function startPolling() {
     if (pollingInterval) return;
-    loadData();
-    pollingInterval = setInterval(() => loadData(), POLLING_INTERVAL_MS);
+    // При старте автообновления сначала загружаем полные данные (если не загружены)
+    if (!rawData.length) fullLoadData();
+    else loadIncremental();
+    pollingInterval = setInterval(() => loadIncremental(), POLLING_INTERVAL_MS);
 }
 
 function stopPolling() {
@@ -113,44 +87,48 @@ function stopPolling() {
     }
 }
 
-async function loadData() {
+// Полная загрузка всех данных за выбранный интервал
+async function fullLoadData() {
+    const start = document.getElementById('start').value;
+    const end = document.getElementById('end').value;
+    const online = document.getElementById('online').checked;
+
+    if (!start || !end) return;
+
+    const startDate = new Date(start + ':00');
+    const endDate = new Date(end + ':00');
+    if (isNaN(startDate) || isNaN(endDate)) return;
+
+    currentInterval = { start: startDate, end: endDate };
+
+    // Сбрасываем lastDt при полной загрузке
+    lastDt = null;
+
+    await loadData(currentInterval.start, currentInterval.end, null);
+}
+
+// Загрузка новых данных (инкрементально)
+async function loadIncremental() {
+    if (!currentInterval) return;
+    if (!lastDt) {
+        // Если lastDt нет, значит полная загрузка ещё не делалась
+        await fullLoadData();
+        return;
+    }
+    // Загружаем только данные, которые новее lastDt
+    await loadData(currentInterval.start, currentInterval.end, lastDt);
+}
+
+// Универсальная функция загрузки данных с сервера (с защитой от дублирования)
+async function loadData(start, end, since = null) {
     if (abortController) abortController.abort();
     abortController = new AbortController();
 
     const column = document.getElementById('column').value;
-    const startInput = document.getElementById('start').value;
-    const endInput = document.getElementById('end').value;
     const online = document.getElementById('online').checked;
 
-    let startDate, endDate;
-
-    if (!startInput) {
-        alert('Укажите дату начала');
-        return;
-    }
-    startDate = new Date(startInput + ':00');
-    if (isNaN(startDate)) {
-        alert('Некорректная дата начала');
-        return;
-    }
-
-    if (online) {
-        endDate = new Date();
-        document.getElementById('end').value = formatDateTimeLocal(endDate);
-    } else {
-        if (!endInput) {
-            alert('Укажите дату конца');
-            return;
-        }
-        endDate = new Date(endInput + ':00');
-        if (isNaN(endDate)) {
-            alert('Некорректная дата конца');
-            return;
-        }
-    }
-
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
     const dtInterval = `${startISO}/${endISO}`;
     const xParam = JSON.stringify([{ dt_interval: dtInterval }]);
 
@@ -158,6 +136,9 @@ async function loadData() {
     url.searchParams.append('x', xParam);
     url.searchParams.append('y', column);
     url.searchParams.append('online', online ? 'true' : 'false');
+    if (since) {
+        url.searchParams.append('since', since.toISOString());
+    }
 
     try {
         const response = await fetch(url, { signal: abortController.signal });
@@ -167,12 +148,26 @@ async function loadData() {
         }
         const result = await response.json();
 
-        rawData = result.data.map(item => ({
-            dt: item.dt,
-            value: item.value,
-            p1: item.p1,
-            p2: item.p2
-        }));
+        if (result.data.length === 0) return;
+
+        // Обновляем rawData с защитой от дублирования
+        if (since) {
+            // Создаём Set существующих ключей (dt + id)
+            const existingKeys = new Set(rawData.map(item => `${item.dt}_${item.id}`));
+            const newUniqueData = result.data.filter(item => !existingKeys.has(`${item.dt}_${item.id}`));
+            if (newUniqueData.length) {
+                rawData = [...rawData, ...newUniqueData];
+                rawData.sort((a, b) => new Date(a.dt) - new Date(b.dt));
+            }
+        } else {
+            rawData = result.data;
+        }
+
+        // Обновляем lastDt (самая поздняя дата)
+        if (rawData.length) {
+            const lastDate = new Date(rawData[rawData.length - 1].dt);
+            if (!lastDt || lastDate > lastDt) lastDt = lastDate;
+        }
 
         rebuildFromRawData();
     } catch (err) {
@@ -182,6 +177,46 @@ async function loadData() {
     }
 }
 
+// Перестроение точек из rawData с учётом выбранной колонки
+function rebuildFromRawData() {
+    if (!rawData.length) {
+        document.getElementById('scrollContainer').style.display = 'none';
+        updateChartWithUniformSpacing([], currentYColumn);
+        currentData = [];
+        currentVisiblePoints = [];
+        return;
+    }
+
+    const points = rawData.map(item => ({
+        x: new Date(item.dt).getTime(),
+        y: currentYColumn === 'value' ? item.value : (currentYColumn === 'p1' ? item.p1 : item.p2),
+        original: item
+    })).sort((a, b) => a.x - b.x);
+
+    currentData = points;
+
+    const totalPoints = currentData.length;
+    if (totalPoints > MAX_VISIBLE_POINTS) {
+        document.getElementById('scrollContainer').style.display = 'block';
+
+        const rangeInput = document.getElementById('timeRange');
+        rangeInput.min = 0;
+        rangeInput.max = 100;
+
+        const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
+        let percent = parseFloat(rangeInput.value);
+        if (isNaN(percent)) percent = 100;
+
+        const startIndex = Math.round((percent / 100) * maxStartIndex);
+        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
+        updateChartWithUniformSpacing(visiblePoints, currentYColumn);
+    } else {
+        document.getElementById('scrollContainer').style.display = 'none';
+        updateChartWithUniformSpacing(currentData, currentYColumn);
+    }
+}
+
+// Обновление графика с равномерным расположением точек (категориальная ось)
 function updateChartWithUniformSpacing(points, yColumn) {
     if (!points || points.length === 0) {
         if (chart) {
@@ -284,6 +319,5 @@ function onRangeChange(e) {
         stopPolling();
     }
     const percent = parseFloat(e.target.value);
-    const yColumn = document.getElementById('column').value;
-    applyVisibleWindow(percent, yColumn);
+    applyVisibleWindow(percent, currentYColumn);
 }

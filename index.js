@@ -83,7 +83,7 @@ app.get('/api/trends', async (req, res) => {
     }
 
     try {
-        const { x, y = 'value', online = 'false' } = req.query;
+        const { x, y = 'value', online = 'false', since } = req.query;
 
         if (!x) {
             return res.status(400).json({
@@ -137,7 +137,6 @@ app.get('/api/trends', async (req, res) => {
             });
         }
 
-        // Разрешённые колонки для тренда (value, p1, p2)
         const allowedColumns = ['value', 'p1', 'p2'];
         if (!allowedColumns.includes(y)) {
             return res.status(400).json({
@@ -149,8 +148,8 @@ app.get('/api/trends', async (req, res) => {
 
         const isOnline = online === 'true';
 
-        const client = await pool.connect();
-        const query = `
+        // Формируем запрос
+        let query = `
             SELECT 
                 dt,
                 id,
@@ -159,15 +158,28 @@ app.get('/api/trends', async (req, res) => {
                 p2
             FROM data_transmissions
             WHERE dt BETWEEN $1 AND $2
-            ORDER BY dt ASC, id ASC
         `;
-        const result = await client.query(query, [start, end]);
+        const params = [start, end];
+
+        // Если передан параметр since (время последней полученной записи), то добавляем условие
+        if (since) {
+            const sinceDate = new Date(since);
+            if (!isNaN(sinceDate.getTime())) {
+                query += ` AND dt > $3`;
+                params.push(sinceDate);
+            }
+        }
+
+        query += ` ORDER BY dt ASC, id ASC`;
+
+        const client = await pool.connect();
+        const result = await client.query(query, params);
         client.release();
 
         const data = result.rows.map(row => ({
             id: row.id,
-            dt: row.dt.toISOString(),          // время транзакции
-            value: row.value,                  // значение выбранной колонки
+            dt: row.dt.toISOString(),
+            value: row.value,
             p1: row.p1,
             p2: row.p2,
             status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
@@ -176,10 +188,7 @@ app.get('/api/trends', async (req, res) => {
         res.json({
             success: true,
             source: 'postgresql',
-            interval: {
-                start: start.toISOString(),
-                end: end.toISOString()
-            },
+            interval: { start: start.toISOString(), end: end.toISOString() },
             column: y,
             online: isOnline,
             count: data.length,
