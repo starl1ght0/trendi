@@ -253,29 +253,6 @@ canvas {
     background: #d3d3d3;
 }
 
-/* Стили для IE/Edge (опционально) */
-#timeRange::-ms-thumb {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #007bff;
-    cursor: pointer;
-}
-
-#timeRange::-ms-track {
-    height: 12px;
-    border-radius: 6px;
-    background: transparent;
-    border-color: transparent;
-    color: transparent;
-}
-
-#timeRange::-ms-fill-lower,
-#timeRange::-ms-fill-upper {
-    background: #d3d3d3;
-    border-radius: 6px;
-}
-
 @media (max-width: 400px) {
     .container {
         padding: 10px;
