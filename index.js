@@ -2,9 +2,14 @@ const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 const cors = require('cors');
+const http = require('http');
+const WebSocket = require('ws');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
@@ -12,7 +17,14 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 let pool = null;
+let wsClients = new Set();
 
+// Храним текущий интервал для опроса новых данных (устанавливается клиентом)
+let currentInterval = { start: null, end: null };
+let lastNotifiedDt = null;
+let pollingTimer = null;
+
+// Проверка обязательных переменных окружения
 const requiredEnv = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
 for (const envVar of requiredEnv) {
     if (!process.env[envVar]) {
@@ -60,6 +72,100 @@ async function testPostgresConnection() {
     }
 }
 
+// Функция для отправки новых данных всем подключённым клиентам
+function broadcastNewData(data) {
+    const message = JSON.stringify({
+        type: 'new_data',
+        data: data,
+        timestamp: new Date().toISOString()
+    });
+    wsClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+        }
+    });
+}
+
+// Функция для опроса новых данных в базе
+async function checkForNewData() {
+    if (!pool || !currentInterval.start || !currentInterval.end) return;
+
+    try {
+        const client = await pool.connect();
+        const query = `
+            SELECT MAX(dt) as last_dt
+            FROM data_transmissions
+            WHERE dt BETWEEN $1 AND $2
+        `;
+        const result = await client.query(query, [currentInterval.start, currentInterval.end]);
+        client.release();
+
+        const serverLastDt = result.rows[0].last_dt ? new Date(result.rows[0].last_dt) : null;
+        if (serverLastDt && (!lastNotifiedDt || serverLastDt > lastNotifiedDt)) {
+            // Есть новые данные – загружаем их
+            const newDataQuery = `
+                SELECT dt, id, value, p1, p2
+                FROM data_transmissions
+                WHERE dt BETWEEN $1 AND $2
+                AND dt > $3
+                ORDER BY dt ASC, id ASC
+            `;
+            const newClient = await pool.connect();
+            const newResult = await newClient.query(newDataQuery, [
+                currentInterval.start,
+                currentInterval.end,
+                lastNotifiedDt || new Date(0)
+            ]);
+            newClient.release();
+
+            if (newResult.rows.length) {
+                broadcastNewData(newResult.rows);
+            }
+            lastNotifiedDt = serverLastDt;
+        }
+    } catch (err) {
+        console.error('Ошибка проверки новых данных:', err);
+    }
+}
+
+// Запускаем периодическую проверку новых данных (каждые 5 секунд)
+function startPollingForNewData() {
+    if (pollingTimer) clearInterval(pollingTimer);
+    pollingTimer = setInterval(checkForNewData, 5000);
+}
+
+// WebSocket обработчики
+wss.on('connection', (ws) => {
+    console.log('WebSocket клиент подключен');
+    wsClients.add(ws);
+
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            // Клиент может отправить обновление интервала
+            if (data.type === 'set_interval') {
+                currentInterval.start = new Date(data.start);
+                currentInterval.end = new Date(data.end);
+                lastNotifiedDt = null; // сбросить, чтобы при следующей проверке загрузились все новые данные
+                console.log('Интервал обновлён:', currentInterval);
+            }
+        } catch (err) {
+            console.error('Ошибка обработки WebSocket сообщения:', err);
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('WebSocket клиент отключен');
+        wsClients.delete(ws);
+    });
+
+    ws.on('error', (err) => {
+        console.error('WebSocket ошибка:', err);
+        wsClients.delete(ws);
+    });
+});
+
+// Маршруты
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -148,7 +254,6 @@ app.get('/api/trends', async (req, res) => {
 
         const isOnline = online === 'true';
 
-        // Формируем запрос
         let query = `
             SELECT 
                 dt,
@@ -161,7 +266,6 @@ app.get('/api/trends', async (req, res) => {
         `;
         const params = [start, end];
 
-        // Если передан параметр since (время последней полученной записи), то добавляем условие
         if (since) {
             const sinceDate = new Date(since);
             if (!isNaN(sinceDate.getTime())) {
@@ -184,6 +288,13 @@ app.get('/api/trends', async (req, res) => {
             p2: row.p2,
             status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
         }));
+
+        // При первом запросе обновляем интервал на сервере для WebSocket
+        if (!currentInterval.start || !currentInterval.end) {
+            currentInterval = { start, end };
+            lastNotifiedDt = null;
+            startPollingForNewData();
+        }
 
         res.json({
             success: true,
@@ -211,8 +322,9 @@ async function startServer() {
     console.log('Проверка PostgreSQL...');
     const dbConnected = await testPostgresConnection();
 
-    app.listen(PORT, '0.0.0.0', () => {
+    server.listen(PORT, '0.0.0.0', () => {
         console.log(`Сервер запущен: http://localhost:${PORT}`);
+        console.log(`WebSocket доступен на ws://localhost:${PORT}`);
         console.log(`База данных: ${dbConnected ? 'Подключена' : 'Не подключена'}`);
         if (!dbConnected) {
             console.warn('Внимание: все запросы к /api/trends будут возвращать ошибку 500, так как тестовые данные отключены.');

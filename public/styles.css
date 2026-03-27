@@ -38,7 +38,9 @@ h1 {
 }
 
 @media (max-width: 600px) {
-    h1 { font-size: 20px; }
+    h1 {
+        font-size: 20px;
+    }
 }
 
 .toggle-btn {
@@ -65,15 +67,21 @@ h1 {
     border-bottom: 1px solid #eee;
 }
 
-.control-group.inline {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+.last-update {
+    font-size: 12px;
+    color: #666;
+    background: #f0f0f0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-left: auto;
+    font-family: monospace;
 }
 
-.control-group.inline label {
-    margin-bottom: 0;
+@media (max-width: 600px) {
+    .last-update {
+        font-size: 10px;
+        padding: 3px 6px;
+    }
 }
 
 .settings-panel {
@@ -104,7 +112,11 @@ h1 {
 }
 
 @media (max-width: 600px) {
-    .controls { flex-direction: column; align-items: stretch; gap: 10px; }
+    .controls {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
 }
 
 .control-group {
@@ -121,7 +133,9 @@ h1 {
 }
 
 @media (max-width: 600px) {
-    .control-group label { font-size: 12px; }
+    .control-group label {
+        font-size: 12px;
+    }
 }
 
 .control-group select,
@@ -140,19 +154,6 @@ h1 {
     .control-group input[type="datetime-local"] {
         font-size: 12px;
         padding: 6px 8px;
-    }
-}
-
-.control-group input[type="checkbox"] {
-    width: 20px;
-    height: 20px;
-    margin-top: 5px;
-}
-
-@media (max-width: 600px) {
-    .control-group input[type="checkbox"] {
-        width: 24px;
-        height: 24px;
     }
 }
 
@@ -216,10 +217,6 @@ canvas {
     border-radius: 6px;
     background: #d3d3d3;
     outline: none;
-    user-select: none;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
 }
 
 #timeRange::-webkit-slider-runnable-track {
@@ -237,7 +234,7 @@ canvas {
     background: #007bff;
     margin-top: -6px;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 #timeRange::-moz-range-thumb {
@@ -247,7 +244,7 @@ canvas {
     background: #007bff;
     cursor: pointer;
     border: none;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 #timeRange::-moz-range-track {
@@ -256,11 +253,47 @@ canvas {
     background: #d3d3d3;
 }
 
+/* Стили для IE/Edge (опционально) */
+#timeRange::-ms-thumb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #007bff;
+    cursor: pointer;
+}
+
+#timeRange::-ms-track {
+    height: 12px;
+    border-radius: 6px;
+    background: transparent;
+    border-color: transparent;
+    color: transparent;
+}
+
+#timeRange::-ms-fill-lower,
+#timeRange::-ms-fill-upper {
+    background: #d3d3d3;
+    border-radius: 6px;
+}
+
 @media (max-width: 400px) {
-    .container { padding: 10px; gap: 10px; }
-    .controls { padding: 10px; }
-    .scroll-container { padding: 10px 0; }
-    #timeRange { height: 10px; }
+    .container {
+        padding: 10px;
+        gap: 10px;
+    }
+    
+    .controls {
+        padding: 10px;
+    }
+    
+    .scroll-container {
+        padding: 10px 0;
+    }
+    
+    #timeRange {
+        height: 10px;
+    }
+    
     #timeRange::-webkit-slider-thumb,
     #timeRange::-moz-range-thumb {
         width: 20px;
