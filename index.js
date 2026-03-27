@@ -19,12 +19,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 let pool = null;
 let wsClients = new Set();
 
-// Храним текущий интервал для опроса новых данных (устанавливается клиентом)
 let currentInterval = { start: null, end: null };
 let lastNotifiedDt = null;
 let pollingTimer = null;
 
-// Проверка обязательных переменных окружения
 const requiredEnv = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
 for (const envVar of requiredEnv) {
     if (!process.env[envVar]) {
@@ -72,7 +70,6 @@ async function testPostgresConnection() {
     }
 }
 
-// Функция для отправки новых данных всем подключённым клиентам
 function broadcastNewData(data) {
     const message = JSON.stringify({
         type: 'new_data',
@@ -86,7 +83,6 @@ function broadcastNewData(data) {
     });
 }
 
-// Функция для опроса новых данных в базе
 async function checkForNewData() {
     if (!pool || !currentInterval.start || !currentInterval.end) return;
 
@@ -102,7 +98,6 @@ async function checkForNewData() {
 
         const serverLastDt = result.rows[0].last_dt ? new Date(result.rows[0].last_dt) : null;
         if (serverLastDt && (!lastNotifiedDt || serverLastDt > lastNotifiedDt)) {
-            // Есть новые данные – загружаем их
             const newDataQuery = `
                 SELECT dt, id, value, p1, p2
                 FROM data_transmissions
@@ -128,13 +123,11 @@ async function checkForNewData() {
     }
 }
 
-// Запускаем периодическую проверку новых данных (каждые 5 секунд)
 function startPollingForNewData() {
     if (pollingTimer) clearInterval(pollingTimer);
     pollingTimer = setInterval(checkForNewData, 5000);
 }
 
-// WebSocket обработчики
 wss.on('connection', (ws) => {
     console.log('WebSocket клиент подключен');
     wsClients.add(ws);
@@ -142,11 +135,10 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            // Клиент может отправить обновление интервала
             if (data.type === 'set_interval') {
                 currentInterval.start = new Date(data.start);
                 currentInterval.end = new Date(data.end);
-                lastNotifiedDt = null; // сбросить, чтобы при следующей проверке загрузились все новые данные
+                lastNotifiedDt = null;
                 console.log('Интервал обновлён:', currentInterval);
             }
         } catch (err) {
@@ -165,7 +157,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Маршруты
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -189,7 +180,7 @@ app.get('/api/trends', async (req, res) => {
     }
 
     try {
-        const { x, y = 'value', online = 'false', since } = req.query;
+        const { x, y = 'value', limit = 100, before } = req.query;
 
         if (!x) {
             return res.status(400).json({
@@ -252,35 +243,35 @@ app.get('/api/trends', async (req, res) => {
             });
         }
 
-        const isOnline = online === 'true';
-
+        // Формируем SQL с пагинацией
         let query = `
-            SELECT 
-                dt,
-                id,
-                ${y} AS value,
-                p1,
-                p2
+            SELECT dt, id, ${y} AS value, p1, p2
             FROM data_transmissions
             WHERE dt BETWEEN $1 AND $2
         `;
         const params = [start, end];
+        let paramIndex = 3;
 
-        if (since) {
-            const sinceDate = new Date(since);
-            if (!isNaN(sinceDate.getTime())) {
-                query += ` AND dt > $3`;
-                params.push(sinceDate);
+        if (before) {
+            const beforeDate = new Date(before);
+            if (!isNaN(beforeDate.getTime())) {
+                query += ` AND dt < $${paramIndex}`;
+                params.push(beforeDate);
+                paramIndex++;
             }
         }
 
-        query += ` ORDER BY dt ASC, id ASC`;
+        // Сортировка по убыванию даты, чтобы получить самые новые (или старые относительно before)
+        query += ` ORDER BY dt DESC, id DESC LIMIT $${paramIndex}`;
+        params.push(parseInt(limit, 10));
 
         const client = await pool.connect();
         const result = await client.query(query, params);
         client.release();
 
-        const data = result.rows.map(row => ({
+        // Переворачиваем в хронологический порядок
+        const rows = result.rows.reverse();
+        const data = rows.map(row => ({
             id: row.id,
             dt: row.dt.toISOString(),
             value: row.value,
@@ -289,7 +280,7 @@ app.get('/api/trends', async (req, res) => {
             status: row.value > 800 ? 'error' : row.value > 500 ? 'warning' : 'success'
         }));
 
-        // При первом запросе обновляем интервал на сервере для WebSocket
+        // При первом запросе запускаем опрос новых данных
         if (!currentInterval.start || !currentInterval.end) {
             currentInterval = { start, end };
             lastNotifiedDt = null;
@@ -301,7 +292,6 @@ app.get('/api/trends', async (req, res) => {
             source: 'postgresql',
             interval: { start: start.toISOString(), end: end.toISOString() },
             column: y,
-            online: isOnline,
             count: data.length,
             timestamp: new Date().toISOString(),
             data: data
@@ -327,7 +317,7 @@ async function startServer() {
         console.log(`WebSocket доступен на ws://localhost:${PORT}`);
         console.log(`База данных: ${dbConnected ? 'Подключена' : 'Не подключена'}`);
         if (!dbConnected) {
-            console.warn('Внимание: все запросы к /api/trends будут возвращать ошибку 500, так как тестовые данные отключены.');
+            console.warn('Внимание: все запросы к /api/trends будут возвращать ошибку 500');
         }
     });
 }

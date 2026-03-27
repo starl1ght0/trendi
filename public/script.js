@@ -2,22 +2,19 @@ document.addEventListener('DOMContentLoaded', init);
 
 let chart;
 let abortController = null;
-let pollingInterval = null;
-const POLLING_INTERVAL_MS = 5000;
-const MAX_STORED_POINTS = 1000;
+const MAX_VISIBLE_POINTS = 30;
+const CHUNK_SIZE = 100;
+const SCROLL_LOAD_THRESHOLD = 10; // % от начала, при котором подгружаем старые данные
 
-let currentData = [];
-let rawData = [];
-let lastDt = null;
+let loadedPoints = [];
+let earliestLoadedDt = null;
+let latestLoadedDt = null;
+let hasMore = true;
 let currentInterval = null;
 let currentYColumn = 'value';
-
-const MAX_VISIBLE_POINTS = 30;
 let currentVisiblePoints = [];
-
 let isLoading = false;
 
-// WebSocket
 let ws = null;
 let wsConnected = false;
 let wsReconnectTimer = null;
@@ -33,7 +30,7 @@ function init() {
 
     document.getElementById('column').addEventListener('change', (e) => {
         currentYColumn = e.target.value;
-        if (rawData.length) fullLoadData();
+        if (loadedPoints.length) fullLoadData();
     });
 
     const timeRange = document.getElementById('timeRange');
@@ -49,7 +46,7 @@ function init() {
     document.getElementById('end').addEventListener('input', debounceLoad);
 
     connectWebSocket();
-    startPolling();
+    fullLoadData();
 }
 
 function connectWebSocket() {
@@ -62,7 +59,6 @@ function connectWebSocket() {
         wsConnected = true;
         if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
 
-        // Отправляем текущий интервал на сервер
         if (currentInterval) {
             ws.send(JSON.stringify({
                 type: 'set_interval',
@@ -104,26 +100,60 @@ function handleNewData(newRows) {
         id: row.id,
         value: row.value,
         p1: row.p1,
-        p2: row.p2
+        p2: row.p2,
+        x: new Date(row.dt).getTime(),
+        y: currentYColumn === 'value' ? row.value : (currentYColumn === 'p1' ? row.p1 : row.p2)
     }));
 
-    const existingKeys = new Set(rawData.map(item => `${item.dt}_${item.id}`));
-    const newUniqueData = newPoints.filter(item => !existingKeys.has(`${item.dt}_${item.id}`));
-    if (!newUniqueData.length) return;
+    const existingKeys = new Set(loadedPoints.map(p => `${p.dt}_${p.id}`));
+    const uniqueNew = newPoints.filter(p => !existingKeys.has(`${p.dt}_${p.id}`));
+    if (!uniqueNew.length) return;
 
-    rawData = [...rawData, ...newUniqueData];
-    rawData.sort((a, b) => new Date(a.dt) - new Date(b.dt));
+    loadedPoints.push(...uniqueNew);
+    loadedPoints.sort((a, b) => new Date(a.dt) - new Date(b.dt));
 
-    if (rawData.length > MAX_STORED_POINTS) {
-        rawData = rawData.slice(-MAX_STORED_POINTS);
+    earliestLoadedDt = loadedPoints[0].dt;
+    latestLoadedDt = loadedPoints[loadedPoints.length - 1].dt;
+
+    appendNewPoints(uniqueNew);
+    updateLastUpdateTime(); // обновляем время при появлении новой записи
+}
+
+function appendNewPoints(newPoints) {
+    if (!chart) return;
+
+    const newChartPoints = newPoints.map(item => ({
+        x: new Date(item.dt).getTime(),
+        y: currentYColumn === 'value' ? item.value : (currentYColumn === 'p1' ? item.p1 : item.p2),
+        original: item
+    })).sort((a, b) => a.x - b.x);
+
+    const newLabels = newChartPoints.map(point => {
+        const date = new Date(point.x);
+        return date.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    });
+    const newValues = newChartPoints.map(p => p.y);
+
+    chart.data.labels.push(...newLabels);
+    chart.data.datasets[0].data.push(...newValues);
+
+    const rangeInput = document.getElementById('timeRange');
+    const currentPercent = parseFloat(rangeInput.value);
+    const totalPoints = chart.data.labels.length;
+    const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
+
+    let newPercent = currentPercent;
+    if (currentPercent >= 99.9) {
+        const newStartIndex = totalPoints - MAX_VISIBLE_POINTS;
+        newPercent = (newStartIndex / maxStartIndex) * 100;
+        newPercent = Math.min(100, Math.max(0, newPercent));
+        rangeInput.value = newPercent;
+        applyVisibleWindow(newPercent, currentYColumn);
+    } else {
+        applyVisibleWindow(currentPercent, currentYColumn);
     }
 
-    if (rawData.length) {
-        const lastDate = new Date(rawData[rawData.length - 1].dt);
-        lastDt = lastDate;
-    }
-
-    appendNewPoints(newUniqueData);
+    chart.update();
 }
 
 function updateChartCurrentColor() {
@@ -154,20 +184,6 @@ function formatDateTimeLocal(date) {
     return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
-function startPolling() {
-    if (pollingInterval) return;
-    if (!rawData.length) fullLoadData();
-    else loadIncremental();
-    pollingInterval = setInterval(() => loadIncremental(), POLLING_INTERVAL_MS);
-}
-
-function stopPolling() {
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-    }
-}
-
 async function fullLoadData() {
     const start = document.getElementById('start').value;
     const end = document.getElementById('end').value;
@@ -179,9 +195,11 @@ async function fullLoadData() {
     if (isNaN(startDate) || isNaN(endDate)) return;
 
     currentInterval = { start: startDate, end: endDate };
-    lastDt = null;
+    hasMore = true;
+    loadedPoints = [];
+    earliestLoadedDt = null;
+    latestLoadedDt = null;
 
-    // Отправляем интервал на сервер через WebSocket
     if (wsConnected && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: 'set_interval',
@@ -190,19 +208,11 @@ async function fullLoadData() {
         }));
     }
 
-    await loadData(currentInterval.start, currentInterval.end, null, true);
+    await loadDataChunk(null);
 }
 
-async function loadIncremental() {
+async function loadDataChunk(before = null) {
     if (!currentInterval) return;
-    if (!lastDt) {
-        await fullLoadData();
-        return;
-    }
-    await loadData(currentInterval.start, currentInterval.end, lastDt, false);
-}
-
-async function loadData(start, end, since = null, fullReload = false) {
     if (isLoading) return;
     isLoading = true;
 
@@ -210,17 +220,13 @@ async function loadData(start, end, since = null, fullReload = false) {
     abortController = new AbortController();
 
     const column = document.getElementById('column').value;
-    const startISO = start.toISOString();
-    const endISO = end.toISOString();
-    const dtInterval = `${startISO}/${endISO}`;
-    const xParam = JSON.stringify([{ dt_interval: dtInterval }]);
-
     const url = new URL('/api/trends', window.location.origin);
+    const xParam = JSON.stringify([{ dt_interval: `${currentInterval.start.toISOString()}/${currentInterval.end.toISOString()}` }]);
     url.searchParams.append('x', xParam);
     url.searchParams.append('y', column);
-    url.searchParams.append('online', 'true');
-    if (since) {
-        url.searchParams.append('since', since.toISOString());
+    url.searchParams.append('limit', CHUNK_SIZE);
+    if (before) {
+        url.searchParams.append('before', before);
     }
 
     try {
@@ -231,142 +237,70 @@ async function loadData(start, end, since = null, fullReload = false) {
         }
         const result = await response.json();
 
-        if (result.data.length === 0) {
-            updateLastUpdateTime();
+        if (!result.data || result.data.length === 0) {
+            if (before) hasMore = false;
             isLoading = false;
             return;
         }
 
-        if (since && !fullReload) {
-            const existingKeys = new Set(rawData.map(item => `${item.dt}_${item.id}`));
-            const newUniqueData = result.data.filter(item => !existingKeys.has(`${item.dt}_${item.id}`));
-            if (newUniqueData.length) {
-                rawData = [...rawData, ...newUniqueData];
-                rawData.sort((a, b) => new Date(a.dt) - new Date(b.dt));
+        const newPoints = result.data.map(item => ({
+            dt: item.dt,
+            id: item.id,
+            value: item.value,
+            p1: item.p1,
+            p2: item.p2,
+            x: new Date(item.dt).getTime(),
+            y: column === 'value' ? item.value : (column === 'p1' ? item.p1 : item.p2)
+        }));
 
-                if (rawData.length > MAX_STORED_POINTS) {
-                    rawData = rawData.slice(-MAX_STORED_POINTS);
-                }
-
-                if (rawData.length) {
-                    const lastDate = new Date(rawData[rawData.length - 1].dt);
-                    lastDt = lastDate;
-                }
-
-                appendNewPoints(newUniqueData);
-            }
-        } else {
-            rawData = result.data;
-            if (rawData.length > MAX_STORED_POINTS) {
-                rawData = rawData.slice(-MAX_STORED_POINTS);
-            }
-            if (rawData.length) {
-                const lastDate = new Date(rawData[rawData.length - 1].dt);
-                lastDt = lastDate;
-            } else {
-                lastDt = null;
-            }
-            rebuildFromRawData();
+        const existingKeys = new Set(loadedPoints.map(p => `${p.dt}_${p.id}`));
+        const uniqueNew = newPoints.filter(p => !existingKeys.has(`${p.dt}_${p.id}`));
+        if (uniqueNew.length === 0) {
+            isLoading = false;
+            return;
         }
 
-        updateLastUpdateTime();
+        loadedPoints.push(...uniqueNew);
+        loadedPoints.sort((a, b) => new Date(a.dt) - new Date(b.dt));
 
+        earliestLoadedDt = loadedPoints[0].dt;
+        latestLoadedDt = loadedPoints[loadedPoints.length - 1].dt;
+
+        if (before && result.data.length < CHUNK_SIZE) hasMore = false;
+
+        rebuildFromRawData();
+        updateLastUpdateTime();
     } catch (err) {
         if (err.name === 'AbortError') return;
-        console.error('Ошибка загрузки:', err);
+        console.error('Ошибка загрузки порции:', err);
         alert('Не удалось загрузить данные: ' + err.message);
     } finally {
         isLoading = false;
     }
 }
 
-function updateLastUpdateTime() {
-    const now = new Date();
-    const timeStr = now.toLocaleString('ru-RU', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-    const el = document.getElementById('lastUpdateTime');
-    if (el) el.textContent = `Обновлено: ${timeStr}`;
-}
-
-function appendNewPoints(newPoints) {
-    if (!chart) return;
-
-    const newChartPoints = newPoints.map(item => ({
-        x: new Date(item.dt).getTime(),
-        y: currentYColumn === 'value' ? item.value : (currentYColumn === 'p1' ? item.p1 : item.p2),
-        original: item
-    })).sort((a, b) => a.x - b.x);
-
-    currentData.push(...newChartPoints);
-    currentData.sort((a, b) => a.x - b.x);
-
-    const newLabels = newChartPoints.map(point => {
-        const date = new Date(point.x);
-        return date.toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    });
-    const newValues = newChartPoints.map(p => p.y);
-
-    chart.data.labels.push(...newLabels);
-    chart.data.datasets[0].data.push(...newValues);
-
-    const rangeInput = document.getElementById('timeRange');
-    const currentPercent = parseFloat(rangeInput.value);
-    const totalPoints = chart.data.labels.length;
-    const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-
-    let newPercent = currentPercent;
-
-    if (currentPercent >= 99.9) {
-        const newStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-        newPercent = (newStartIndex / maxStartIndex) * 100;
-        newPercent = Math.min(100, Math.max(0, newPercent));
-        rangeInput.value = newPercent;
-        applyVisibleWindow(newPercent, currentYColumn);
-    } else {
-        applyVisibleWindow(currentPercent, currentYColumn);
-    }
-
-    chart.update();
-}
-
 function rebuildFromRawData() {
-    if (!rawData.length) {
+    if (!loadedPoints.length) {
         document.getElementById('scrollContainer').style.display = 'none';
         updateChartWithUniformSpacing([], currentYColumn);
-        currentData = [];
         currentVisiblePoints = [];
         return;
     }
 
-    const points = rawData.map(item => ({
-        x: new Date(item.dt).getTime(),
-        y: currentYColumn === 'value' ? item.value : (currentYColumn === 'p1' ? item.p1 : item.p2),
-        original: item
-    })).sort((a, b) => a.x - b.x);
-
-    currentData = points;
-
-    const totalPoints = currentData.length;
+    const totalPoints = loadedPoints.length;
     if (totalPoints > MAX_VISIBLE_POINTS) {
         document.getElementById('scrollContainer').style.display = 'block';
         const rangeInput = document.getElementById('timeRange');
-        rangeInput.min = 0;
-        rangeInput.max = 100;
         const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
         let percent = parseFloat(rangeInput.value);
         if (isNaN(percent)) percent = 100;
-        const startIndex = Math.round((percent / 100) * maxStartIndex);
-        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
+        let startIndex = Math.round((percent / 100) * maxStartIndex);
+        startIndex = Math.min(Math.max(0, startIndex), maxStartIndex);
+        const visiblePoints = loadedPoints.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
         updateChartWithUniformSpacing(visiblePoints, currentYColumn);
     } else {
         document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing(currentData, currentYColumn);
+        updateChartWithUniformSpacing(loadedPoints, currentYColumn);
     }
 }
 
@@ -443,6 +377,9 @@ function updateChartWithUniformSpacing(points, yColumn) {
                 }
             }
         });
+        // Добавляем обработчик прокрутки колёсиком мыши на canvas
+        const canvas = document.getElementById('trendChart');
+        canvas.addEventListener('wheel', onChartWheel);
     } else {
         chart.data.labels = labels;
         chart.data.datasets[0].label = yColumn;
@@ -456,23 +393,68 @@ function updateChartWithUniformSpacing(points, yColumn) {
     }
 }
 
+function onChartWheel(e) {
+    e.preventDefault();
+    const rangeInput = document.getElementById('timeRange');
+    let currentVal = parseFloat(rangeInput.value);
+    // Шаг прокрутки: 1% за одно движение колесика
+    const step = 1;
+    const delta = e.deltaY > 0 ? -step : step;
+    let newVal = currentVal + delta;
+    newVal = Math.min(100, Math.max(0, newVal));
+    if (newVal !== currentVal) {
+        rangeInput.value = newVal;
+        onRangeChange({ target: rangeInput });
+    }
+}
+
 function getVisiblePointsByPercent(percent) {
-    const totalPoints = currentData.length;
-    if (totalPoints <= MAX_VISIBLE_POINTS) return currentData;
+    const totalPoints = loadedPoints.length;
+    if (totalPoints <= MAX_VISIBLE_POINTS) return loadedPoints;
 
     const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
     let startIndex = Math.round((percent / 100) * maxStartIndex);
     startIndex = Math.min(Math.max(0, startIndex), maxStartIndex);
-    return currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
+    return loadedPoints.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
 }
 
 function applyVisibleWindow(percent, yColumn) {
-    if (!currentData.length) return;
+    if (!loadedPoints.length) return;
     const visiblePoints = getVisiblePointsByPercent(percent);
     if (visiblePoints.length) updateChartWithUniformSpacing(visiblePoints, yColumn);
 }
 
-function onRangeChange(e) {
+async function onRangeChange(e) {
     const percent = parseFloat(e.target.value);
     applyVisibleWindow(percent, currentYColumn);
+
+    if (hasMore && earliestLoadedDt && percent < SCROLL_LOAD_THRESHOLD) {
+        await loadDataChunk(earliestLoadedDt);
+        const rangeInput = document.getElementById('timeRange');
+        const totalPoints = loadedPoints.length;
+        if (totalPoints > MAX_VISIBLE_POINTS) {
+            const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
+            let startIndex = Math.round((percent / 100) * maxStartIndex);
+            startIndex = Math.min(Math.max(0, startIndex), maxStartIndex);
+            const newPercent = (startIndex / maxStartIndex) * 100;
+            rangeInput.value = newPercent;
+            applyVisibleWindow(newPercent, currentYColumn);
+        } else {
+            rebuildFromRawData();
+        }
+    }
+}
+
+function updateLastUpdateTime() {
+    const now = new Date();
+    const timeStr = now.toLocaleString('ru-RU', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    const el = document.getElementById('lastUpdateTime');
+    if (el) el.textContent = `Обновлено: ${timeStr}`;
 }
