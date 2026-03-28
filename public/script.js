@@ -1,21 +1,20 @@
 document.addEventListener('DOMContentLoaded', init);
 
 let chart;
-const VIEW_WINDOW = 50; // Количество точек в видимой области
-const CHUNK_SIZE = 100; // По сколько точек подгружаем из БД
+const VIEW_WINDOW = 60; // Сколько точек видим на экране одновременно
+const CHUNK_SIZE = 100; // По сколько подгружаем из БД
 
 let loadedPoints = [];
+let currentIndex = 0; // На каком индексе массива мы сейчас находимся (левая граница окна)
 let earliestLoadedDt = null;
 let currentYColumn = 'value';
 let isLoading = false;
 let hasMore = true;
 
-const mpack = msgpack5(); // Инициализация декодера
+const mpack = msgpack5();
 
 function init() {
     setDefaultDates();
-    
-    const timeRange = document.getElementById('timeRange');
     
     document.getElementById('toggle-settings').addEventListener('click', () => {
         document.getElementById('settings-panel').classList.toggle('hidden');
@@ -28,24 +27,31 @@ function init() {
         fullResetAndLoad();
     });
 
-    // Логика скролла (ползунок)
-    timeRange.addEventListener('input', (e) => {
-        const index = parseInt(e.target.value);
-        updateChartView(index);
-        
-        // Если подошли близко к левому краю (начало массива), подгружаем историю
-        if (index < 10 && hasMore && !isLoading) {
-            loadMoreHistory(false);
-        }
-    });
-
-    // Колесо мыши
-    document.getElementById('trendChart').addEventListener('wheel', (e) => {
+    // Управление скроллом через колесо мыши
+    const chartWrapper = document.getElementById('chartWrapper');
+    chartWrapper.addEventListener('wheel', (e) => {
         e.preventDefault();
-        let val = parseInt(timeRange.value);
-        const delta = e.deltaY > 0 ? -2 : 2;
-        timeRange.value = Math.max(0, Math.min(parseInt(timeRange.max), val + delta));
-        timeRange.dispatchEvent(new Event('input'));
+        if (loadedPoints.length === 0 || isLoading) return;
+
+        // Чувствительность скролла: e.deltaY > 0 - крутим вниз (в будущее), < 0 - вверх (в прошлое)
+        // Но обычно пользователю привычнее: вниз/вправо - вперед, вверх/влево - назад.
+        const delta = e.deltaY > 0 ? 3 : -3;
+        
+        let nextIndex = currentIndex + delta;
+
+        // Ограничения
+        const maxPossibleIndex = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+        nextIndex = Math.max(0, Math.min(maxPossibleIndex, nextIndex));
+
+        if (nextIndex !== currentIndex) {
+            currentIndex = nextIndex;
+            updateChartView();
+
+            // Если подошли к левому краю (старые данные), подгружаем историю
+            if (currentIndex < 15 && hasMore && !isLoading) {
+                loadMoreHistory();
+            }
+        }
     }, { passive: false });
 
     fullResetAndLoad();
@@ -53,6 +59,7 @@ function init() {
 
 async function fullResetAndLoad() {
     loadedPoints = [];
+    currentIndex = 0;
     hasMore = true;
     earliestLoadedDt = null;
     if (chart) {
@@ -65,14 +72,15 @@ async function fullResetAndLoad() {
 async function loadMoreHistory(isInitial = false) {
     if (isLoading || !hasMore) return;
     
-    const start = document.getElementById('start').value;
-    const end = document.getElementById('end').value;
-    if (!start || !end) return;
+    const startInput = document.getElementById('start').value;
+    const endInput = document.getElementById('end').value;
+    if (!startInput || !endInput) return;
 
     isLoading = true;
-    
+    document.getElementById('lastUpdateTime').textContent = "Загрузка...";
+
     const url = new URL('/api/trends', window.location.origin);
-    const xParam = JSON.stringify([{ dt_interval: `${new Date(start).toISOString()}/${new Date(end).toISOString()}` }]);
+    const xParam = JSON.stringify([{ dt_interval: `${new Date(startInput).toISOString()}/${new Date(endInput).toISOString()}` }]);
     url.searchParams.append('x', xParam);
     url.searchParams.append('y', currentYColumn);
     url.searchParams.append('limit', CHUNK_SIZE);
@@ -82,16 +90,14 @@ async function loadMoreHistory(isInitial = false) {
     }
 
     try {
-        const response = await fetch(url, {
-            headers: { 'Accept': 'application/x-msgpack' }
-        });
-
+        const response = await fetch(url, { headers: { 'Accept': 'application/x-msgpack' } });
         const buffer = await response.arrayBuffer();
         const result = mpack.decode(new Uint8Array(buffer));
 
         if (!result.data || result.data.length === 0) {
             hasMore = false;
             isLoading = false;
+            updateStatusText();
             return;
         }
 
@@ -101,37 +107,38 @@ async function loadMoreHistory(isInitial = false) {
             label: new Date(item.dt).toLocaleTimeString('ru-RU')
         }));
 
-        // Сохраняем дату самой ранней точки для следующего запроса "влево"
+        const addedCount = newPoints.length;
         earliestLoadedDt = result.data[0].dt;
 
-        // Сохраняем текущую длину для корректировки скролла
-        const addedCount = newPoints.length;
-        
-        // Добавляем новые (более старые) данные в начало массива
+        // Добавляем данные в начало
         loadedPoints = [...newPoints, ...loadedPoints];
 
-        const range = document.getElementById('timeRange');
-        const maxIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
-        range.max = maxIdx;
-
         if (isInitial) {
-            // При первой загрузке показываем последние (самые правые) точки
-            range.value = maxIdx;
+            // При первой загрузке встаем в самый конец массива (самые новые данные)
+            currentIndex = Math.max(0, loadedPoints.length - VIEW_WINDOW);
             initChart();
         } else {
-            // Чтобы график не прыгнул при добавлении данных в начало,
-            // сдвигаем индекс ползунка вперед на количество добавленных точек
-            range.value = parseInt(range.value) + addedCount;
+            // КОРРЕКЦИЯ: Чтобы данные под курсором не убежали, 
+            // сдвигаем текущий индекс на количество добавленных в начало элементов
+            currentIndex += addedCount;
         }
 
-        updateChartView(parseInt(range.value));
+        updateChartView();
         if (result.data.length < CHUNK_SIZE) hasMore = false;
 
     } catch (err) {
-        console.error('Ошибка загрузки:', err);
+        console.error('Ошибка:', err);
     } finally {
         isLoading = false;
+        updateStatusText();
     }
+}
+
+function updateStatusText() {
+    const total = loadedPoints.length;
+    const endIdx = Math.min(currentIndex + VIEW_WINDOW, total);
+    document.getElementById('lastUpdateTime').textContent = 
+        `Диапазон: ${currentIndex}-${endIdx} (Всего: ${total}) ${hasMore ? '' : '[Конец истории]'}`;
 }
 
 function initChart() {
@@ -146,10 +153,10 @@ function initChart() {
                 label: currentYColumn,
                 data: [],
                 borderColor: color,
-                backgroundColor: color + '33',
+                backgroundColor: color + '22',
                 borderWidth: 2,
-                tension: 0.1,
                 pointRadius: 1,
+                tension: 0.1,
                 fill: true
             }]
         },
@@ -159,31 +166,30 @@ function initChart() {
             animation: false,
             scales: {
                 x: { grid: { display: false } },
-                y: { beginAtZero: false }
+                y: { beginAtZero: false, grace: '5%' }
             },
-            plugins: { legend: { display: false } }
+            plugins: {
+                legend: { display: false },
+                tooltip: { intersect: false, mode: 'index' }
+            }
         }
     });
 }
 
-function updateChartView(startIndex) {
+function updateChartView() {
     if (!chart || loadedPoints.length === 0) return;
 
-    const visibleData = loadedPoints.slice(startIndex, startIndex + VIEW_WINDOW);
+    const visibleData = loadedPoints.slice(currentIndex, currentIndex + VIEW_WINDOW);
     
     chart.data.labels = visibleData.map(p => p.label);
     chart.data.datasets[0].data = visibleData.map(p => p.y);
-    chart.data.datasets[0].label = currentYColumn;
-    
-    chart.update('none');
-    
-    document.getElementById('lastUpdateTime').textContent = 
-        `Точки: ${startIndex} - ${startIndex + visibleData.length} (Всего в памяти: ${loadedPoints.length})`;
+    chart.update('none'); // Мгновенное обновление
+    updateStatusText();
 }
 
 function setDefaultDates() {
     const start = new Date();
-    start.setHours(start.getHours() - 24); // По умолчанию последние 24 часа
+    start.setHours(start.getHours() - 24); 
     document.getElementById('start').value = start.toISOString().slice(0, 16);
     document.getElementById('end').value = new Date().toISOString().slice(0, 16);
 }

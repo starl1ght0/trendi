@@ -1,40 +1,28 @@
-/* Обнуление стилей */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
-:root {
-    --primary-color: #007bff;
-    --primary-hover: #0056b3;
-    --bg-color: #f4f7f9;
-    --panel-bg: #ffffff;
-    --text-color: #333;
-    --border-color: #e0e4e8;
-}
-
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background-color: var(--bg-color);
-    color: var(--text-color);
+    font-family: -apple-system, system-ui, sans-serif;
+    background-color: #f0f2f5;
+    color: #1c1e21;
     height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow: hidden; /* Запрещаем общий скролл страницы */
+    overflow: hidden;
 }
 
-/* Основной контейнер */
 .container {
     flex: 1;
     display: flex;
     flex-direction: column;
     padding: 20px;
     gap: 15px;
-    min-height: 0; /* Важно для корректного сжатия flex-элементов */
+    min-height: 0;
 }
 
-/* Шапка */
 .header {
     display: flex;
     align-items: center;
@@ -42,42 +30,9 @@ body {
 }
 
 h1 {
-    font-size: 22px;
-    font-weight: 600;
+    font-size: 20px;
 }
 
-/* Кнопки */
-button {
-    padding: 10px 18px;
-    font-size: 14px;
-    font-weight: 500;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-}
-
-#load-btn {
-    background-color: var(--primary-color);
-    color: white;
-}
-
-#load-btn:hover {
-    background-color: var(--primary-hover);
-    box-shadow: 0 2px 6px rgba(0, 123, 255, 0.3);
-}
-
-.toggle-btn {
-    background-color: #6c757d;
-    color: white;
-}
-
-.toggle-btn:hover {
-    background-color: #5a6268;
-}
-
-/* Панель управления и статуса */
 .fixed-controls {
     display: flex;
     align-items: center;
@@ -86,22 +41,19 @@ button {
 
 .last-update {
     font-size: 12px;
-    color: #666;
-    background: #ebf0f3;
-    padding: 6px 12px;
+    color: #65676b;
+    background: #e4e6eb;
+    padding: 6px 15px;
     border-radius: 20px;
-    font-family: 'Courier New', Courier, monospace;
     margin-left: auto;
+    font-family: monospace;
 }
 
-/* Панель настроек */
 .settings-panel {
-    background-color: var(--panel-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: white;
     padding: 15px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    transition: all 0.3s ease;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .settings-panel.hidden {
@@ -111,46 +63,56 @@ button {
 .controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 20px;
+    gap: 15px;
 }
 
 .control-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    flex: 1 1 200px; /* Элементы растягиваются, но не меньше 200px */
+    gap: 5px;
+    flex: 1 1 180px;
 }
 
-.control-group label {
-    font-size: 13px;
+label {
+    font-size: 12px;
     font-weight: 600;
-    color: #555;
 }
 
-.control-group input, 
-.control-group select {
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: 5px;
-    font-size: 14px;
-    background-color: #fff;
-    outline: none;
-}
-
-.control-group input:focus, 
-.control-group select:focus {
-    border-color: var(--primary-color);
-}
-
-/* Контейнер для графика */
-.chart-container {
-    flex: 1; /* Занимает всё оставшееся пространство */
-    background-color: white;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    position: relative;
+input, select, button {
     padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+button {
+    background-color: #0084ff;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+button:hover {
+    background-color: #0073e6;
+}
+
+.toggle-btn {
+    background-color: #8a8d91;
+}
+
+.chart-container {
+    flex: 1;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 15px;
     min-height: 0;
+    cursor: grab; /* Показываем, что область интерактивна */
+}
+
+.chart-container:active {
+    cursor: grabbing;
 }
 
 canvas {
@@ -158,76 +120,8 @@ canvas {
     height: 100% !important;
 }
 
-/* Контейнер для ползунка времени */
-.scroll-container {
-    background-color: var(--panel-bg);
-    padding: 15px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    margin-bottom: 5px;
-}
-
-/* Стилизация ползунка (Range Input) */
-#timeRange {
-    -webkit-appearance: none;
-    width: 100%;
-    height: 8px;
-    background: #e0e4e8;
-    border-radius: 4px;
-    outline: none;
-    cursor: pointer;
-}
-
-/* Бегунок для Chrome/Safari/Edge */
-#timeRange::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    background: var(--primary-color);
-    border: 3px solid #fff;
-    border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    cursor: pointer;
-    transition: transform 0.1s ease;
-}
-
-#timeRange::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-}
-
-/* Бегунок для Firefox */
-#timeRange::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    background: var(--primary-color);
-    border: 3px solid #fff;
-    border-radius: 50%;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    cursor: pointer;
-}
-
-/* Адаптивность для мобильных устройств */
 @media (max-width: 600px) {
-    .container {
-        padding: 10px;
-    }
-
-    .controls {
-        flex-direction: column;
-        gap: 10px;
-    }
-
-    .header h1 {
-        font-size: 18px;
-    }
-
-    .last-update {
-        display: none; /* Скрываем статус на очень маленьких экранах */
-    }
-
-    button {
-        padding: 10px;
-        width: 100%; /* Кнопки на всю ширину на мобилках */
-    }
+    .container { padding: 10px; }
+    .controls { flex-direction: column; }
+    .last-update { display: none; }
 }
