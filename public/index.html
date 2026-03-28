@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>График трендов</title>
+    <title>Тренд График (MsgPack + Infinite Scroll)</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -29,21 +29,18 @@
                     </select>
                 </div>
                 <div class="control-group">
-                    <label for="start">Начало:</label>
+                    <label for="start">Начало интервала:</label>
                     <input type="datetime-local" id="start">
                 </div>
                 <div class="control-group">
-                    <label for="end">Конец:</label>
+                    <label for="end">Конец интервала:</label>
                     <input type="datetime-local" id="end">
                 </div>
                 <div class="control-group">
-                    <label for="line-color">Цвет графика:</label>
+                    <label for="line-color">Цвет:</label>
                     <select id="line-color">
                         <option value="#4dc9f6" selected>Голубой</option>
                         <option value="#ff6384">Розовый</option>
-                        <option value="#36a2eb">Синий</option>
-                        <option value="#ffcd56">Жёлтый</option>
-                        <option value="#9966ff">Фиолетовый</option>
                     </select>
                 </div>
             </div>
@@ -53,13 +50,14 @@
             <canvas id="trendChart"></canvas>
         </div>
 
-        <div class="scroll-container" id="scrollContainer" style="display: none;">
-            <input type="range" id="timeRange" min="0" max="100" value="100" step="1">
+        <div class="scroll-container" id="scrollContainer">
+            <input type="range" id="timeRange" min="0" max="0" value="0">
         </div>
     </div>
 
+    <!-- Библиотеки -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/msgpack5@6.0.2/dist/msgpack5.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
