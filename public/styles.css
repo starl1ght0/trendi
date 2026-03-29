@@ -1,3 +1,4 @@
+/* Базовые сбросы */
 * {
     margin: 0;
     padding: 0;
@@ -5,9 +6,9 @@
 }
 
 body {
-    font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background-color: #f0f2f5;
-    color: #1a1a1a;
+    color: #1c1e21;
     height: 100vh;
     display: flex;
     overflow: hidden;
@@ -17,79 +18,205 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding: 15px;
+    padding: 20px;
     gap: 15px;
+    max-width: 100vw;
 }
 
+/* Заголовок и верхняя панель */
 .header {
     display: flex;
     align-items: center;
     gap: 15px;
 }
 
-h1 { font-size: 20px; color: #333; }
+h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+}
 
 .fixed-controls {
     display: flex;
     align-items: center;
     gap: 15px;
+    flex-wrap: wrap;
 }
 
+/* Статус-бар */
 .status-bar {
     background: #2c3e50;
-    color: #ecf0f1;
-    padding: 8px 15px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-family: monospace;
-    margin-left: auto;
-}
-
-.settings-panel {
-    background: white;
-    padding: 15px;
+    color: #ffffff;
+    padding: 10px 16px;
     border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    font-size: 13px;
+    font-family: monospace;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-left: auto;
+    min-width: 320px;
+    text-align: right;
 }
 
-.settings-panel.hidden { display: none; }
+/* Панель настроек */
+.settings-panel {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    border: 1px solid #e4e6eb;
+}
+
+.settings-panel.hidden {
+    display: none;
+}
 
 .controls {
     display: flex;
     flex-wrap: wrap;
-    gap: 15px;
+    gap: 20px;
+    align-items: flex-end;
 }
 
 .control-group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
 }
 
-label { font-size: 10px; font-weight: bold; color: #666; text-transform: uppercase; }
+label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #65676b;
+    text-transform: uppercase;
+}
 
+/* Поля ввода и кнопки */
 input, select, button {
-    padding: 8px 12px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 13px;
+    padding: 10px 14px;
+    border: 1px solid #dddfe2;
+    border-radius: 6px;
+    font-size: 14px;
+    background-color: #f5f6f7;
+    outline: none;
 }
 
-button { cursor: pointer; transition: 0.2s; }
-.btn-primary { background: #0084ff; color: white; border: none; }
-.btn-primary:hover { background: #0066cc; }
-.btn-secondary { background: #e4e6eb; color: #1c1e21; border: none; }
+input:focus, select:focus {
+    border-color: #0084ff;
+    background-color: #ffffff;
+}
 
+button {
+    cursor: pointer;
+    font-weight: 600;
+    border: none;
+}
+
+.btn-primary {
+    background-color: #0084ff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #0073e6;
+}
+
+.btn-secondary {
+    background-color: #e4e6eb;
+    color: #1c1e21;
+}
+
+.btn-secondary:hover {
+    background-color: #d8dadf;
+}
+
+/* Настройка выбора цвета (RGB) */
+/* Важно: разделяем префиксы по отдельным правилам */
+input[type="color"] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    width: 60px;
+    height: 40px;
+    padding: 2px;
+    background: #ffffff;
+    border: 1px solid #dddfe2;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+
+input[type="color"]::-moz-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+
+/* Область графика */
 .chart-area {
     flex: 1;
-    background: white;
-    border-radius: 8px;
-    border: 1px solid #ddd;
-    padding: 10px;
-    min-height: 0;
+    background: #ffffff;
+    border: 1px solid #e4e6eb;
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    min-height: 0; 
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 canvas {
     width: 100% !important;
     height: 100% !important;
+    display: block;
+}
+
+/* Адаптивность */
+@media (max-width: 900px) {
+    .controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .status-bar {
+        margin-left: 0;
+        width: 100%;
+        text-align: center;
+        min-width: auto;
+    }
+
+    .fixed-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+/* Кастомный скроллбар (только для webkit) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #999;
+}
+
+/* Firefox поддержка скроллбара */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #ccc #f1f1f1;
 }

@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', init);
 
 let chart;
-const VIEW_WINDOW = 50; // Количество точек на экране
+const VIEW_WINDOW = 50; 
 const CHUNK_SIZE = 100;
 
 let loadedPoints = []; 
@@ -12,11 +12,11 @@ let isLoading = false;
 let hasMore = true;
 let lastUpdateStr = "никогда";
 
+let fetchController = null;
 const mpack = msgpack5();
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-// Функция Debounce: откладывает выполнение func, пока не пройдет timeout мс затишья
 function debounce(func, timeout = 500) {
     let timer;
     return (...args) => {
@@ -25,7 +25,6 @@ function debounce(func, timeout = 500) {
     };
 }
 
-// Создаем "задебаунсенную" версию функции полной перезагрузки
 const debouncedResetAndLoad = debounce(() => {
     fullResetAndLoad();
 }, 600);
@@ -40,33 +39,34 @@ async function init() {
         document.getElementById('settings-panel').classList.toggle('hidden');
     });
 
-    // Кнопка принудительного обновления (сбрасывает Конец на текущее время ПК)
     document.getElementById('load-btn').addEventListener('click', () => {
         document.getElementById('end').value = formatToDateTimeLocal(new Date());
-        fullResetAndLoad(); // Тут вызываем сразу, так как это явное действие пользователя
+        fullResetAndLoad(); 
     });
 
-    // При изменении колонки - используем debounce
     document.getElementById('column').addEventListener('change', (e) => {
         currentYColumn = e.target.value;
         debouncedResetAndLoad();
     });
 
-    // Авто-обновление при ручном изменении дат в инпутах (с задержкой)
     document.getElementById('start').addEventListener('input', debouncedResetAndLoad);
     document.getElementById('end').addEventListener('input', debouncedResetAndLoad);
 
-    document.getElementById('line-color').addEventListener('change', (e) => {
+    // МГНОВЕННОЕ ОБНОВЛЕНИЕ ЦВЕТА
+    document.getElementById('line-color').addEventListener('input', (e) => {
+        const newColor = e.target.value;
         if (chart) {
-            chart.data.datasets[0].borderColor = e.target.value;
-            chart.data.datasets[0].backgroundColor = e.target.value + '22';
-            chart.update();
+            const dataset = chart.data.datasets[0];
+            dataset.borderColor = newColor;
+            dataset.backgroundColor = newColor + '22'; // Полупрозрачная заливка
+            dataset.pointBackgroundColor = newColor;
+            dataset.pointBorderColor = newColor;
+            chart.update('none'); // 'none' для мгновенной отрисовки без анимации
         }
     });
 
     document.getElementById('chartWrapper').addEventListener('wheel', handleWheel, { passive: false });
     
-    // Первый запуск
     fullResetAndLoad();
 }
 
@@ -98,7 +98,6 @@ function handleIncomingPoint(point) {
 
     if (loadedPoints.some(p => p.id === newPoint.id)) return;
 
-    // Авто-скролл: если пользователь смотрит на последние точки
     const isAtEnd = (currentViewStartIdx >= (loadedPoints.length - VIEW_WINDOW - 1));
     
     loadedPoints.push(newPoint);
@@ -111,6 +110,7 @@ function handleIncomingPoint(point) {
     }
     
     lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
+    updateStatusText(); 
 }
 
 async function setupInitialDates() {
@@ -125,11 +125,14 @@ async function setupInitialDates() {
 }
 
 async function fullResetAndLoad() {
-    console.log("🔄 Выполнение полной перезагрузки данных...");
+    if (fetchController) fetchController.abort();
+
     loadedPoints = [];
     currentViewStartIdx = 0;
     hasMore = true;
     earliestLoadedDt = null;
+    isLoading = false; 
+
     if (chart) { chart.destroy(); chart = null; }
     await loadMoreHistory(true);
 }
@@ -137,6 +140,10 @@ async function fullResetAndLoad() {
 async function loadMoreHistory(isInitial = false) {
     if (isLoading || !hasMore) return;
     
+    if (fetchController) fetchController.abort();
+    fetchController = new AbortController();
+    const signal = fetchController.signal;
+
     const startVal = document.getElementById('start').value;
     const endVal = document.getElementById('end').value;
 
@@ -151,7 +158,7 @@ async function loadMoreHistory(isInitial = false) {
         url.searchParams.append('limit', CHUNK_SIZE);
         if (earliestLoadedDt) url.searchParams.append('before', earliestLoadedDt);
 
-        const response = await fetch(url);
+        const response = await fetch(url, { signal });
         const result = await response.json();
 
         if (result.success && result.data && result.data.length > 0) {
@@ -178,10 +185,11 @@ async function loadMoreHistory(isInitial = false) {
             if (newPoints.length < CHUNK_SIZE) hasMore = false;
         } else {
             hasMore = false;
-            if (isInitial) initChart(); // Инициализируем пустой график, если данных нет
+            if (isInitial) initChart();
         }
-    } catch (err) { console.error("Ошибка API:", err); }
-    finally { 
+    } catch (err) {
+        if (err.name !== 'AbortError') console.error("Ошибка API:", err);
+    } finally { 
         isLoading = false; 
         lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
         updateStatusText(); 
@@ -203,6 +211,8 @@ function initChart() {
                 data: [], 
                 borderColor: color,
                 backgroundColor: color + '22',
+                pointBackgroundColor: color,
+                pointBorderColor: color,
                 borderWidth: 2,
                 pointRadius: 3,
                 tension: 0.1,
@@ -216,21 +226,10 @@ function initChart() {
             scales: {
                 x: {
                     type: 'category', 
-                    grid: {
-                        display: true,
-                        color: '#e0e0e0',
-                        drawTicks: true
-                    },
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45,
-                        font: { size: 10 }
-                    }
+                    grid: { display: true, color: '#e0e0e0', drawTicks: true },
+                    ticks: { maxRotation: 45, minRotation: 45, font: { size: 10 } }
                 },
-                y: { 
-                    grid: { color: '#f0f0f0' },
-                    grace: '10%' 
-                }
+                y: { grid: { color: '#f0f0f0' }, grace: '10%' }
             },
             plugins: {
                 legend: { display: false },
@@ -258,43 +257,35 @@ function handleWheel(e) {
     e.preventDefault();
     if (loadedPoints.length === 0 || isLoading || !chart) return;
     
-    // Шаг прокрутки
     const delta = e.deltaY > 0 ? 2 : -2;
     let nextIdx = currentViewStartIdx + delta;
-    
     const maxIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
     nextIdx = Math.max(0, Math.min(maxIdx, nextIdx));
 
     if (nextIdx !== currentViewStartIdx) {
         currentViewStartIdx = nextIdx;
         updateChartWindow();
-        // Если подошли к левому краю - грузим еще историю
         if (currentViewStartIdx < 10 && hasMore && !isLoading) loadMoreHistory();
     }
 }
 
 function updateChartWindow() {
     if (!chart || loadedPoints.length === 0) return;
-
-    // Берем текущий срез данных для отображения
     const windowData = loadedPoints.slice(currentViewStartIdx, currentViewStartIdx + VIEW_WINDOW);
-    
     chart.data.labels = windowData.map(p => p.shortTime);
     chart.data.datasets[0].data = windowData.map(p => p.y);
-    
     chart.update('none'); 
     updateStatusText();
 }
 
 function updateStatusText() {
     if (loadedPoints.length === 0) {
-        document.getElementById('status-bar').textContent = "Данных нет за выбранный период";
+        document.getElementById('status-bar').textContent = "Нет данных";
         return;
     }
     const endIdx = Math.min(currentViewStartIdx + VIEW_WINDOW - 1, loadedPoints.length - 1);
     const startP = loadedPoints[currentViewStartIdx];
     const endP = loadedPoints[endIdx];
-    
     const idRange = (startP && endP) ? `${startP.id}-${endP.id}` : '...';
     document.getElementById('status-bar').textContent = 
         `ID: ${idRange} | Всего: ${loadedPoints.length} | Обновлено: ${lastUpdateStr}`;

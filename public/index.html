@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Тренд График Профессиональный</title>
+    <title>График трендов</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/msgpack5@6.0.2/dist/msgpack5.min.js"></script>
@@ -12,7 +12,7 @@
     <div class="container">
         <div class="header">
             <button id="toggle-settings" class="btn-secondary">Настройки</button>
-            <h1>Визуализация трендов</h1>
+            <h1>График трендов</h1>
         </div>
 
         <div class="fixed-controls">
@@ -31,20 +31,16 @@
                     </select>
                 </div>
                 <div class="control-group">
-                    <label>Начало (из БД):</label>
+                    <label>Начало:</label>
                     <input type="datetime-local" id="start" step="1">
                 </div>
                 <div class="control-group">
-                    <label>Конец (ПК):</label>
+                    <label>Конец:</label>
                     <input type="datetime-local" id="end" step="1">
                 </div>
                 <div class="control-group">
-                    <label>Цвет линии:</label>
-                    <select id="line-color">
-                        <option value="#0084ff" selected>Синий</option>
-                        <option value="#ff4757">Красный</option>
-                        <option value="#2ed573">Зеленый</option>
-                    </select>
+                    <label>Цвет графика:</label>
+                    <input type="color" id="line-color" value="#0084ff">
                 </div>
             </div>
         </div>
