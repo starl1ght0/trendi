@@ -1,144 +1,163 @@
 document.addEventListener('DOMContentLoaded', init);
 
 let chart;
-const VIEW_WINDOW = 60; // Сколько точек видим на экране одновременно
-const CHUNK_SIZE = 100; // По сколько подгружаем из БД
+const VIEW_WINDOW = 50; // Количество точек на экране
+const CHUNK_SIZE = 100;
 
-let loadedPoints = [];
-let currentIndex = 0; // На каком индексе массива мы сейчас находимся (левая граница окна)
+let loadedPoints = []; 
+let currentViewStartIdx = 0;
 let earliestLoadedDt = null;
 let currentYColumn = 'value';
 let isLoading = false;
 let hasMore = true;
+let lastUpdateStr = "никогда";
 
 const mpack = msgpack5();
 
-function init() {
-    setDefaultDates();
+async function init() {
+    await setupInitialDates();
+    connectWS();
     
     document.getElementById('toggle-settings').addEventListener('click', () => {
         document.getElementById('settings-panel').classList.toggle('hidden');
     });
 
-    document.getElementById('load-btn').addEventListener('click', () => fullResetAndLoad());
+    document.getElementById('load-btn').addEventListener('click', async () => {
+        document.getElementById('end').value = formatToDateTimeLocal(new Date());
+        await fullResetAndLoad();
+    });
 
     document.getElementById('column').addEventListener('change', (e) => {
         currentYColumn = e.target.value;
         fullResetAndLoad();
     });
 
-    // Управление скроллом через колесо мыши
-    const chartWrapper = document.getElementById('chartWrapper');
-    chartWrapper.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        if (loadedPoints.length === 0 || isLoading) return;
-
-        // Чувствительность скролла: e.deltaY > 0 - крутим вниз (в будущее), < 0 - вверх (в прошлое)
-        // Но обычно пользователю привычнее: вниз/вправо - вперед, вверх/влево - назад.
-        const delta = e.deltaY > 0 ? 3 : -3;
-        
-        let nextIndex = currentIndex + delta;
-
-        // Ограничения
-        const maxPossibleIndex = Math.max(0, loadedPoints.length - VIEW_WINDOW);
-        nextIndex = Math.max(0, Math.min(maxPossibleIndex, nextIndex));
-
-        if (nextIndex !== currentIndex) {
-            currentIndex = nextIndex;
-            updateChartView();
-
-            // Если подошли к левому краю (старые данные), подгружаем историю
-            if (currentIndex < 15 && hasMore && !isLoading) {
-                loadMoreHistory();
-            }
+    document.getElementById('line-color').addEventListener('change', (e) => {
+        if (chart) {
+            chart.data.datasets[0].borderColor = e.target.value;
+            chart.data.datasets[0].backgroundColor = e.target.value + '22';
+            chart.update();
         }
-    }, { passive: false });
+    });
 
+    document.getElementById('chartWrapper').addEventListener('wheel', handleWheel, { passive: false });
     fullResetAndLoad();
+}
+
+function connectWS() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = mpack.decode(new Uint8Array(event.data));
+            if (msg.type === 'NEW_DATA') handleIncomingPoint(msg.data);
+        } catch (e) { console.error("WS Decode Error", e); }
+    };
+    ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+function handleIncomingPoint(point) {
+    const val = Number(point[currentYColumn]);
+    if (isNaN(val)) return;
+
+    const newPoint = {
+        x: new Date(point.dt).getTime(),
+        y: val,
+        id: Number(point.id),
+        fullDate: new Date(point.dt).toLocaleString('ru-RU'),
+        shortTime: new Date(point.dt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    };
+
+    if (loadedPoints.some(p => p.id === newPoint.id)) return;
+
+    // Проверка: находится ли пользователь в конце (авто-скролл)
+    const isAtEnd = (currentViewStartIdx >= (loadedPoints.length - VIEW_WINDOW - 1));
+    
+    loadedPoints.push(newPoint);
+
+    if (chart) {
+        if (isAtEnd) {
+            currentViewStartIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+        }
+        updateChartWindow();
+    }
+    
+    lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
+}
+
+async function setupInitialDates() {
+    try {
+        const res = await fetch('/api/data-range');
+        const json = await res.json();
+        if (json.success && json.min) {
+            document.getElementById('start').value = formatToDateTimeLocal(new Date(json.min));
+        }
+        document.getElementById('end').value = formatToDateTimeLocal(new Date());
+    } catch (e) { console.error(e); }
 }
 
 async function fullResetAndLoad() {
     loadedPoints = [];
-    currentIndex = 0;
+    currentViewStartIdx = 0;
     hasMore = true;
     earliestLoadedDt = null;
-    if (chart) {
-        chart.destroy();
-        chart = null;
-    }
+    if (chart) { chart.destroy(); chart = null; }
     await loadMoreHistory(true);
 }
 
 async function loadMoreHistory(isInitial = false) {
     if (isLoading || !hasMore) return;
     
-    const startInput = document.getElementById('start').value;
-    const endInput = document.getElementById('end').value;
-    if (!startInput || !endInput) return;
+    const startVal = document.getElementById('start').value;
+    const endVal = document.getElementById('end').value;
 
     isLoading = true;
-    document.getElementById('lastUpdateTime').textContent = "Загрузка...";
-
-    const url = new URL('/api/trends', window.location.origin);
-    const xParam = JSON.stringify([{ dt_interval: `${new Date(startInput).toISOString()}/${new Date(endInput).toISOString()}` }]);
-    url.searchParams.append('x', xParam);
-    url.searchParams.append('y', currentYColumn);
-    url.searchParams.append('limit', CHUNK_SIZE);
-    
-    if (earliestLoadedDt) {
-        url.searchParams.append('before', earliestLoadedDt);
-    }
+    document.getElementById('status-bar').textContent = "Загрузка данных...";
 
     try {
-        const response = await fetch(url, { headers: { 'Accept': 'application/x-msgpack' } });
-        const buffer = await response.arrayBuffer();
-        const result = mpack.decode(new Uint8Array(buffer));
+        const url = new URL('/api/trends', window.location.origin);
+        const xParam = JSON.stringify([{ dt_interval: `${new Date(startVal).toISOString()}/${new Date(endVal).toISOString()}` }]);
+        url.searchParams.append('x', xParam);
+        url.searchParams.append('y', currentYColumn);
+        url.searchParams.append('limit', CHUNK_SIZE);
+        if (earliestLoadedDt) url.searchParams.append('before', earliestLoadedDt);
 
-        if (!result.data || result.data.length === 0) {
-            hasMore = false;
-            isLoading = false;
-            updateStatusText();
-            return;
-        }
+        const response = await fetch(url);
+        const result = await response.json();
 
-        const newPoints = result.data.map(item => ({
-            x: new Date(item.dt).getTime(),
-            y: item.value,
-            label: new Date(item.dt).toLocaleTimeString('ru-RU')
-        }));
+        if (result.success && result.data && result.data.length > 0) {
+            const newPoints = result.data.map(item => ({
+                x: new Date(item.dt).getTime(),
+                y: Number(item[currentYColumn]),
+                id: Number(item.id),
+                fullDate: new Date(item.dt).toLocaleString('ru-RU'),
+                shortTime: new Date(item.dt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }));
 
-        const addedCount = newPoints.length;
-        earliestLoadedDt = result.data[0].dt;
+            earliestLoadedDt = result.data[0].dt;
+            const addedCount = newPoints.length;
+            
+            loadedPoints = [...newPoints, ...loadedPoints];
 
-        // Добавляем данные в начало
-        loadedPoints = [...newPoints, ...loadedPoints];
-
-        if (isInitial) {
-            // При первой загрузке встаем в самый конец массива (самые новые данные)
-            currentIndex = Math.max(0, loadedPoints.length - VIEW_WINDOW);
-            initChart();
+            if (isInitial) {
+                currentViewStartIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+                initChart();
+            } else {
+                currentViewStartIdx += addedCount;
+            }
+            updateChartWindow();
+            if (newPoints.length < CHUNK_SIZE) hasMore = false;
         } else {
-            // КОРРЕКЦИЯ: Чтобы данные под курсором не убежали, 
-            // сдвигаем текущий индекс на количество добавленных в начало элементов
-            currentIndex += addedCount;
+            hasMore = false;
         }
-
-        updateChartView();
-        if (result.data.length < CHUNK_SIZE) hasMore = false;
-
-    } catch (err) {
-        console.error('Ошибка:', err);
-    } finally {
-        isLoading = false;
-        updateStatusText();
+    } catch (err) { console.error("Ошибка API:", err); }
+    finally { 
+        isLoading = false; 
+        lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
+        updateStatusText(); 
     }
-}
-
-function updateStatusText() {
-    const total = loadedPoints.length;
-    const endIdx = Math.min(currentIndex + VIEW_WINDOW, total);
-    document.getElementById('lastUpdateTime').textContent = 
-        `Диапазон: ${currentIndex}-${endIdx} (Всего: ${total}) ${hasMore ? '' : '[Конец истории]'}`;
 }
 
 function initChart() {
@@ -148,14 +167,14 @@ function initChart() {
     chart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: [],
+            labels: [], 
             datasets: [{
                 label: currentYColumn,
-                data: [],
+                data: [], 
                 borderColor: color,
                 backgroundColor: color + '22',
                 borderWidth: 2,
-                pointRadius: 1,
+                pointRadius: 3,
                 tension: 0.1,
                 fill: true
             }]
@@ -165,31 +184,87 @@ function initChart() {
             maintainAspectRatio: false,
             animation: false,
             scales: {
-                x: { grid: { display: false } },
-                y: { beginAtZero: false, grace: '5%' }
+                x: {
+                    type: 'category', // Равные расстояния
+                    grid: {
+                        display: true, // Линии вниз
+                        color: '#e0e0e0',
+                        drawTicks: true
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45,
+                        font: { size: 10 }
+                    }
+                },
+                y: { 
+                    grid: { color: '#f0f0f0' },
+                    grace: '10%' 
+                }
             },
             plugins: {
                 legend: { display: false },
-                tooltip: { intersect: false, mode: 'index' }
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        title: (items) => {
+                            const p = loadedPoints[currentViewStartIdx + items[0].dataIndex];
+                            return p ? p.fullDate : '';
+                        },
+                        label: (item) => {
+                            const p = loadedPoints[currentViewStartIdx + item.dataIndex];
+                            return `ID: ${p.id} | Значение: ${item.formattedValue}`;
+                        }
+                    }
+                }
             }
         }
     });
 }
 
-function updateChartView() {
+function handleWheel(e) {
+    e.preventDefault();
+    if (loadedPoints.length === 0 || isLoading || !chart) return;
+    
+    const delta = e.deltaY > 0 ? 2 : -2;
+    let nextIdx = currentViewStartIdx + delta;
+    
+    const maxIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+    nextIdx = Math.max(0, Math.min(maxIdx, nextIdx));
+
+    if (nextIdx !== currentViewStartIdx) {
+        currentViewStartIdx = nextIdx;
+        updateChartWindow();
+        // Подгрузка истории при скролле влево
+        if (currentViewStartIdx < 10 && hasMore && !isLoading) loadMoreHistory();
+    }
+}
+
+function updateChartWindow() {
     if (!chart || loadedPoints.length === 0) return;
 
-    const visibleData = loadedPoints.slice(currentIndex, currentIndex + VIEW_WINDOW);
+    const windowData = loadedPoints.slice(currentViewStartIdx, currentViewStartIdx + VIEW_WINDOW);
     
-    chart.data.labels = visibleData.map(p => p.label);
-    chart.data.datasets[0].data = visibleData.map(p => p.y);
-    chart.update('none'); // Мгновенное обновление
+    chart.data.labels = windowData.map(p => p.shortTime);
+    chart.data.datasets[0].data = windowData.map(p => p.y);
+    
+    chart.update('none'); 
     updateStatusText();
 }
 
-function setDefaultDates() {
-    const start = new Date();
-    start.setHours(start.getHours() - 24); 
-    document.getElementById('start').value = start.toISOString().slice(0, 16);
-    document.getElementById('end').value = new Date().toISOString().slice(0, 16);
+function updateStatusText() {
+    if (loadedPoints.length === 0) return;
+    const endIdx = Math.min(currentViewStartIdx + VIEW_WINDOW - 1, loadedPoints.length - 1);
+    const startP = loadedPoints[currentViewStartIdx];
+    const endP = loadedPoints[endIdx];
+    
+    const idRange = (startP && endP) ? `${startP.id}-${endP.id}` : '...';
+    document.getElementById('status-bar').textContent = 
+        `ID: ${idRange} | Всего: ${loadedPoints.length} | Обновлено: ${lastUpdateStr}`;
+}
+
+function formatToDateTimeLocal(date) {
+    const offset = date.getTimezoneOffset() * 60000;
+    return (new Date(date.getTime() - offset)).toISOString().slice(0, 19);
 }

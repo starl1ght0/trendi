@@ -3,25 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Тренд График (Mouse Scroll Only)</title>
+    <title>Тренд График Профессиональный</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/msgpack5@6.0.2/dist/msgpack5.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <button id="toggle-settings" class="toggle-btn">Настройки</button>
-            <h1>Тренды данных</h1>
+            <button id="toggle-settings" class="btn-secondary">Настройки</button>
+            <h1>Визуализация трендов</h1>
         </div>
 
         <div class="fixed-controls">
-            <button id="load-btn">Обновить график</button>
-            <div class="last-update" id="lastUpdateTime">Прокрутка: Мышь/Тачпад</div>
+            <button id="load-btn" class="btn-primary">Обновить график</button>
+            <div id="status-bar" class="status-bar">Инициализация системы...</div>
         </div>
 
         <div id="settings-panel" class="settings-panel hidden">
             <div class="controls">
                 <div class="control-group">
-                    <label for="column">Колонка Y:</label>
+                    <label>Колонка данных:</label>
                     <select id="column">
                         <option value="value">value</option>
                         <option value="p1">p1</option>
@@ -29,31 +31,28 @@
                     </select>
                 </div>
                 <div class="control-group">
-                    <label for="start">Начало:</label>
-                    <input type="datetime-local" id="start">
+                    <label>Начало (из БД):</label>
+                    <input type="datetime-local" id="start" step="1">
                 </div>
                 <div class="control-group">
-                    <label for="end">Конец:</label>
-                    <input type="datetime-local" id="end">
+                    <label>Конец (ПК):</label>
+                    <input type="datetime-local" id="end" step="1">
                 </div>
                 <div class="control-group">
-                    <label for="line-color">Цвет:</label>
+                    <label>Цвет линии:</label>
                     <select id="line-color">
-                        <option value="#4dc9f6" selected>Голубой</option>
-                        <option value="#ff6384">Розовый</option>
-                        <option value="#36a2eb">Синий</option>
+                        <option value="#0084ff" selected>Синий</option>
+                        <option value="#ff4757">Красный</option>
+                        <option value="#2ed573">Зеленый</option>
                     </select>
                 </div>
             </div>
         </div>
 
-        <div class="chart-container" id="chartWrapper">
+        <div class="chart-area" id="chartWrapper">
             <canvas id="trendChart"></canvas>
         </div>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/msgpack5@6.0.2/dist/msgpack5.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
