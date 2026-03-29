@@ -1,298 +1,297 @@
 document.addEventListener('DOMContentLoaded', init);
 
 let chart;
-let abortController = null;
-let pollingInterval = null;
-const POLLING_INTERVAL_MS = 3000;
+const VIEW_WINDOW = 50; 
+const CHUNK_SIZE = 100;
 
-let currentData = [];              // все загруженные точки (в формате {x, y, executionTime})
-let rawData = [];                  // исходные данные от сервера (с send_time, value, execution_time_ms)
-const MAX_VISIBLE_POINTS = 30;
-let currentVisiblePoints = [];
+let loadedPoints = []; 
+let currentViewStartIdx = 0;
+let earliestLoadedDt = null;
+let currentYColumn = 'value';
+let isLoading = false;
+let hasMore = true;
+let lastUpdateStr = "никогда";
 
-function init() {
-    setDefaultDates();
-    const onlineCheckbox = document.getElementById('online');
-    onlineCheckbox.checked = true;
+let fetchController = null;
+const mpack = msgpack5();
 
-    document.getElementById('toggle-settings').addEventListener('click', toggleSettings);
-    document.getElementById('load-btn').addEventListener('click', () => loadData());
-    onlineCheckbox.addEventListener('change', onOnlineToggle);
-    document.getElementById('line-color').addEventListener('change', () => {
-        if (chart && currentVisiblePoints.length) updateChartCurrentColor();
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+function debounce(func, timeout = 500) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { func.apply(this, args); }, timeout);
+    };
+}
+
+const debouncedResetAndLoad = debounce(() => {
+    fullResetAndLoad();
+}, 600);
+
+// --- ИНИЦИАЛИЗАЦИЯ ---
+
+async function init() {
+    await setupInitialDates();
+    connectWS();
+    
+    document.getElementById('toggle-settings').addEventListener('click', () => {
+        document.getElementById('settings-panel').classList.toggle('hidden');
     });
 
-    // Обработчик изменения колонки Y
-    document.getElementById('column').addEventListener('change', () => {
-        if (rawData.length) {
-            rebuildFromRawData();
+    document.getElementById('load-btn').addEventListener('click', () => {
+        document.getElementById('end').value = formatToDateTimeLocal(new Date());
+        fullResetAndLoad(); 
+    });
+
+    document.getElementById('column').addEventListener('change', (e) => {
+        currentYColumn = e.target.value;
+        debouncedResetAndLoad();
+    });
+
+    document.getElementById('start').addEventListener('input', debouncedResetAndLoad);
+    document.getElementById('end').addEventListener('input', debouncedResetAndLoad);
+
+    // МГНОВЕННОЕ ОБНОВЛЕНИЕ ЦВЕТА
+    document.getElementById('line-color').addEventListener('input', (e) => {
+        const newColor = e.target.value;
+        if (chart) {
+            const dataset = chart.data.datasets[0];
+            dataset.borderColor = newColor;
+            dataset.backgroundColor = newColor + '22'; // Полупрозрачная заливка
+            dataset.pointBackgroundColor = newColor;
+            dataset.pointBorderColor = newColor;
+            chart.update('none'); // 'none' для мгновенной отрисовки без анимации
         }
     });
 
-    const timeRange = document.getElementById('timeRange');
-    timeRange.addEventListener('input', onRangeChange);
-    timeRange.addEventListener('dragstart', (e) => e.preventDefault());
-
-    onOnlineToggle();
+    document.getElementById('chartWrapper').addEventListener('wheel', handleWheel, { passive: false });
+    
+    fullResetAndLoad();
 }
 
-// Перестроить точки из rawData с учётом выбранной колонки
-function rebuildFromRawData() {
-    if (!rawData.length) return;
+function connectWS() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    ws.binaryType = 'arraybuffer';
 
-    const column = document.getElementById('column').value;
-    const points = rawData.map(item => ({
-        x: new Date(item.send_time).getTime(),
-        y: column === 'execution_time_ms' ? item.execution_time_ms : item.value,
-        executionTime: item.execution_time_ms,
-        original: item
-    })).sort((a, b) => a.x - b.x);
-
-    currentData = points;
-
-    const totalPoints = currentData.length;
-    if (totalPoints > MAX_VISIBLE_POINTS) {
-        document.getElementById('scrollContainer').style.display = 'block';
-
-        const rangeInput = document.getElementById('timeRange');
-        rangeInput.min = 0;
-        rangeInput.max = 100;
-
-        const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-        let percent = parseFloat(rangeInput.value);
-        if (isNaN(percent)) percent = 100;
-
-        const startIndex = Math.round((percent / 100) * maxStartIndex);
-        const visiblePoints = currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
-        updateChartWithUniformSpacing(visiblePoints, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
-    } else {
-        document.getElementById('scrollContainer').style.display = 'none';
-        updateChartWithUniformSpacing(currentData, column === 'execution_time_ms' ? 'execution_time_ms' : 'value');
-    }
+    ws.onmessage = (event) => {
+        try {
+            const msg = mpack.decode(new Uint8Array(event.data));
+            if (msg.type === 'NEW_DATA') handleIncomingPoint(msg.data);
+        } catch (e) { console.error("WS Decode Error", e); }
+    };
+    ws.onclose = () => setTimeout(connectWS, 2000);
 }
 
-function updateChartCurrentColor() {
-    if (!chart) return;
-    const color = document.getElementById('line-color').value;
-    chart.data.datasets[0].borderColor = color;
-    chart.data.datasets[0].backgroundColor = color + '33';
-    chart.update();
-}
+function handleIncomingPoint(point) {
+    const val = Number(point[currentYColumn]);
+    if (isNaN(val)) return;
 
-function toggleSettings() {
-    document.getElementById('settings-panel').classList.toggle('hidden');
-}
+    const newPoint = {
+        x: new Date(point.dt).getTime(),
+        y: val,
+        id: Number(point.id),
+        fullDate: new Date(point.dt).toLocaleString('ru-RU'),
+        shortTime: new Date(point.dt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    };
 
-function setDefaultDates() {
-    const startDate = new Date(2024, 0, 15, 0, 0, 0);
-    const endDate = new Date();
-    document.getElementById('start').value = formatDateTimeLocal(startDate);
-    document.getElementById('end').value = formatDateTimeLocal(endDate);
-}
+    if (loadedPoints.some(p => p.id === newPoint.id)) return;
 
-function formatDateTimeLocal(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
+    const isAtEnd = (currentViewStartIdx >= (loadedPoints.length - VIEW_WINDOW - 1));
+    
+    loadedPoints.push(newPoint);
 
-function onOnlineToggle() {
-    const online = document.getElementById('online').checked;
-    if (online) startPolling();
-    else stopPolling();
-}
-
-function startPolling() {
-    if (pollingInterval) return;
-    loadData();
-    pollingInterval = setInterval(() => loadData(), POLLING_INTERVAL_MS);
-}
-
-function stopPolling() {
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-    }
-}
-
-async function loadData() {
-    if (abortController) abortController.abort();
-    abortController = new AbortController();
-
-    const column = document.getElementById('column').value;
-    const startInput = document.getElementById('start').value;
-    const endInput = document.getElementById('end').value;
-    const online = document.getElementById('online').checked;
-
-    let startDate, endDate;
-
-    if (!startInput) {
-        alert('Укажите дату начала');
-        return;
-    }
-    startDate = new Date(startInput + ':00');
-    if (isNaN(startDate)) {
-        alert('Некорректная дата начала');
-        return;
-    }
-
-    if (online) {
-        endDate = new Date();
-        document.getElementById('end').value = formatDateTimeLocal(endDate);
-    } else {
-        if (!endInput) {
-            alert('Укажите дату конца');
-            return;
+    if (chart) {
+        if (isAtEnd) {
+            currentViewStartIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
         }
-        endDate = new Date(endInput + ':00');
-        if (isNaN(endDate)) {
-            alert('Некорректная дата конца');
-            return;
-        }
+        updateChartWindow();
     }
+    
+    lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
+    updateStatusText(); 
+}
 
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
-    const dtInterval = `${startISO}/${endISO}`;
-    const xParam = JSON.stringify([{ dt_interval: dtInterval }]);
+async function setupInitialDates() {
+    try {
+        const res = await fetch('/api/data-range');
+        const json = await res.json();
+        if (json.success && json.min) {
+            document.getElementById('start').value = formatToDateTimeLocal(new Date(json.min));
+        }
+        document.getElementById('end').value = formatToDateTimeLocal(new Date());
+    } catch (e) { console.error(e); }
+}
 
-    const url = new URL('/api/trends', window.location.origin);
-    url.searchParams.append('x', xParam);
-    url.searchParams.append('y', column);
-    url.searchParams.append('online', online ? 'true' : 'false');
+async function fullResetAndLoad() {
+    if (fetchController) fetchController.abort();
+
+    loadedPoints = [];
+    currentViewStartIdx = 0;
+    hasMore = true;
+    earliestLoadedDt = null;
+    isLoading = false; 
+
+    if (chart) { chart.destroy(); chart = null; }
+    await loadMoreHistory(true);
+}
+
+async function loadMoreHistory(isInitial = false) {
+    if (isLoading || !hasMore) return;
+    
+    if (fetchController) fetchController.abort();
+    fetchController = new AbortController();
+    const signal = fetchController.signal;
+
+    const startVal = document.getElementById('start').value;
+    const endVal = document.getElementById('end').value;
+
+    isLoading = true;
+    document.getElementById('status-bar').textContent = "Загрузка данных...";
 
     try {
-        const response = await fetch(url, { signal: abortController.signal });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `Ошибка HTTP: ${response.status}`);
-        }
+        const url = new URL('/api/trends', window.location.origin);
+        const xParam = JSON.stringify([{ dt_interval: `${new Date(startVal).toISOString()}/${new Date(endVal).toISOString()}` }]);
+        url.searchParams.append('x', xParam);
+        url.searchParams.append('y', currentYColumn);
+        url.searchParams.append('limit', CHUNK_SIZE);
+        if (earliestLoadedDt) url.searchParams.append('before', earliestLoadedDt);
+
+        const response = await fetch(url, { signal });
         const result = await response.json();
 
-        // Сохраняем сырые данные
-        rawData = result.data.map(item => ({
-            send_time: item.send_time,
-            value: item.value,
-            execution_time_ms: item.execution_time_ms
-        }));
+        if (result.success && result.data && result.data.length > 0) {
+            const newPoints = result.data.map(item => ({
+                x: new Date(item.dt).getTime(),
+                y: Number(item[currentYColumn]),
+                id: Number(item.id),
+                fullDate: new Date(item.dt).toLocaleString('ru-RU'),
+                shortTime: new Date(item.dt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }));
 
-        rebuildFromRawData(); // перестраиваем график на основе выбранной колонки
+            earliestLoadedDt = result.data[0].dt;
+            const addedCount = newPoints.length;
+            
+            loadedPoints = [...newPoints, ...loadedPoints];
+
+            if (isInitial) {
+                currentViewStartIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+                initChart();
+            } else {
+                currentViewStartIdx += addedCount;
+            }
+            updateChartWindow();
+            if (newPoints.length < CHUNK_SIZE) hasMore = false;
+        } else {
+            hasMore = false;
+            if (isInitial) initChart();
+        }
     } catch (err) {
-        if (err.name === 'AbortError') return;
-        console.error('Ошибка загрузки:', err);
-        if (!online) alert('Не удалось загрузить данные: ' + err.message);
+        if (err.name !== 'AbortError') console.error("Ошибка API:", err);
+    } finally { 
+        isLoading = false; 
+        lastUpdateStr = new Date().toLocaleTimeString('ru-RU');
+        updateStatusText(); 
     }
 }
 
-function updateChartWithUniformSpacing(points, yColumn) {
-    if (!points || points.length === 0) {
-        if (chart) {
-            chart.data.labels = [];
-            chart.data.datasets[0].data = [];
-            chart.update();
-        }
-        currentVisiblePoints = [];
-        return;
-    }
+function initChart() {
+    const canvas = document.getElementById('trendChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const color = document.getElementById('line-color').value;
 
-    currentVisiblePoints = points;
-
-    const lineColor = document.getElementById('line-color').value;
-    const fillColor = lineColor + '33';
-
-    const labels = points.map(point => {
-        const date = new Date(point.x);
-        return date.toLocaleString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
-    });
-
-    if (!chart) {
-        const ctx = document.getElementById('trendChart').getContext('2d');
-        chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: yColumn,
-                    data: points.map(p => p.y),
-                    borderColor: lineColor,
-                    backgroundColor: fillColor,
-                    tension: 0.1,
-                    pointRadius: 3,
-                    pointHoverRadius: 5,
-                    fill: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: { type: 'category', title: { display: true, text: 'Время' } },
-                    y: { beginAtZero: true, title: { display: true, text: yColumn } }
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [], 
+            datasets: [{
+                label: currentYColumn,
+                data: [], 
+                borderColor: color,
+                backgroundColor: color + '22',
+                pointBackgroundColor: color,
+                pointBorderColor: color,
+                borderWidth: 2,
+                pointRadius: 3,
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                x: {
+                    type: 'category', 
+                    grid: { display: true, color: '#e0e0e0', drawTicks: true },
+                    ticks: { maxRotation: 45, minRotation: 45, font: { size: 10 } }
                 },
-                plugins: {
-                    tooltip: {
-                        callbacks: {
-                            label: (context) => {
-                                const point = currentVisiblePoints[context.dataIndex];
-                                if (!point) return [];
-                                const timeStr = new Date(point.x).toLocaleString('ru-RU', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    second: '2-digit'
-                                });
-                                const lines = [`${yColumn}: ${point.y}`, `Время: ${timeStr}`];
-                                if (point.executionTime !== undefined && point.executionTime !== null) {
-                                    lines.push(`execution_time_ms: ${point.executionTime}`);
-                                }
-                                return lines;
-                            },
-                            title: () => ''
+                y: { grid: { color: '#f0f0f0' }, grace: '10%' }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        title: (items) => {
+                            const p = loadedPoints[currentViewStartIdx + items[0].dataIndex];
+                            return p ? p.fullDate : '';
+                        },
+                        label: (item) => {
+                            const p = loadedPoints[currentViewStartIdx + item.dataIndex];
+                            return p ? `ID: ${p.id} | Значение: ${item.formattedValue}` : '';
                         }
                     }
                 }
             }
-        });
-    } else {
-        chart.data.labels = labels;
-        chart.data.datasets[0].label = yColumn;
-        chart.data.datasets[0].data = points.map(p => p.y);
-        chart.data.datasets[0].borderColor = lineColor;
-        chart.data.datasets[0].backgroundColor = fillColor;
-        chart.update();
+        }
+    });
+    updateChartWindow();
+}
+
+function handleWheel(e) {
+    e.preventDefault();
+    if (loadedPoints.length === 0 || isLoading || !chart) return;
+    
+    const delta = e.deltaY > 0 ? 2 : -2;
+    let nextIdx = currentViewStartIdx + delta;
+    const maxIdx = Math.max(0, loadedPoints.length - VIEW_WINDOW);
+    nextIdx = Math.max(0, Math.min(maxIdx, nextIdx));
+
+    if (nextIdx !== currentViewStartIdx) {
+        currentViewStartIdx = nextIdx;
+        updateChartWindow();
+        if (currentViewStartIdx < 10 && hasMore && !isLoading) loadMoreHistory();
     }
 }
 
-function getVisiblePointsByPercent(percent) {
-    const totalPoints = currentData.length;
-    if (totalPoints <= MAX_VISIBLE_POINTS) return currentData;
-
-    const maxStartIndex = totalPoints - MAX_VISIBLE_POINTS;
-    let startIndex = Math.round((percent / 100) * maxStartIndex);
-    startIndex = Math.min(Math.max(0, startIndex), maxStartIndex);
-    return currentData.slice(startIndex, startIndex + MAX_VISIBLE_POINTS);
+function updateChartWindow() {
+    if (!chart || loadedPoints.length === 0) return;
+    const windowData = loadedPoints.slice(currentViewStartIdx, currentViewStartIdx + VIEW_WINDOW);
+    chart.data.labels = windowData.map(p => p.shortTime);
+    chart.data.datasets[0].data = windowData.map(p => p.y);
+    chart.update('none'); 
+    updateStatusText();
 }
 
-function applyVisibleWindow(percent, yColumn) {
-    if (!currentData.length) return;
-    const visiblePoints = getVisiblePointsByPercent(percent);
-    if (visiblePoints.length) updateChartWithUniformSpacing(visiblePoints, yColumn);
-}
-
-function onRangeChange(e) {
-    const onlineCheckbox = document.getElementById('online');
-    if (onlineCheckbox.checked) {
-        onlineCheckbox.checked = false;
-        stopPolling();
+function updateStatusText() {
+    if (loadedPoints.length === 0) {
+        document.getElementById('status-bar').textContent = "Нет данных";
+        return;
     }
-    const percent = parseFloat(e.target.value);
-    const yColumn = document.getElementById('column').value;
-    applyVisibleWindow(percent, yColumn);
+    const endIdx = Math.min(currentViewStartIdx + VIEW_WINDOW - 1, loadedPoints.length - 1);
+    const startP = loadedPoints[currentViewStartIdx];
+    const endP = loadedPoints[endIdx];
+    const idRange = (startP && endP) ? `${startP.id}-${endP.id}` : '...';
+    document.getElementById('status-bar').textContent = 
+        `ID: ${idRange} | Всего: ${loadedPoints.length} | Обновлено: ${lastUpdateStr}`;
+}
+
+function formatToDateTimeLocal(date) {
+    const offset = date.getTimezoneOffset() * 60000;
+    return (new Date(date.getTime() - offset)).toISOString().slice(0, 19);
 }
