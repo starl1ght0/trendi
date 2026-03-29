@@ -14,6 +14,24 @@ let lastUpdateStr = "никогда";
 
 const mpack = msgpack5();
 
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+// Функция Debounce: откладывает выполнение func, пока не пройдет timeout мс затишья
+function debounce(func, timeout = 500) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { func.apply(this, args); }, timeout);
+    };
+}
+
+// Создаем "задебаунсенную" версию функции полной перезагрузки
+const debouncedResetAndLoad = debounce(() => {
+    fullResetAndLoad();
+}, 600);
+
+// --- ИНИЦИАЛИЗАЦИЯ ---
+
 async function init() {
     await setupInitialDates();
     connectWS();
@@ -22,15 +40,21 @@ async function init() {
         document.getElementById('settings-panel').classList.toggle('hidden');
     });
 
-    document.getElementById('load-btn').addEventListener('click', async () => {
+    // Кнопка принудительного обновления (сбрасывает Конец на текущее время ПК)
+    document.getElementById('load-btn').addEventListener('click', () => {
         document.getElementById('end').value = formatToDateTimeLocal(new Date());
-        await fullResetAndLoad();
+        fullResetAndLoad(); // Тут вызываем сразу, так как это явное действие пользователя
     });
 
+    // При изменении колонки - используем debounce
     document.getElementById('column').addEventListener('change', (e) => {
         currentYColumn = e.target.value;
-        fullResetAndLoad();
+        debouncedResetAndLoad();
     });
+
+    // Авто-обновление при ручном изменении дат в инпутах (с задержкой)
+    document.getElementById('start').addEventListener('input', debouncedResetAndLoad);
+    document.getElementById('end').addEventListener('input', debouncedResetAndLoad);
 
     document.getElementById('line-color').addEventListener('change', (e) => {
         if (chart) {
@@ -41,6 +65,8 @@ async function init() {
     });
 
     document.getElementById('chartWrapper').addEventListener('wheel', handleWheel, { passive: false });
+    
+    // Первый запуск
     fullResetAndLoad();
 }
 
@@ -72,7 +98,7 @@ function handleIncomingPoint(point) {
 
     if (loadedPoints.some(p => p.id === newPoint.id)) return;
 
-    // Проверка: находится ли пользователь в конце (авто-скролл)
+    // Авто-скролл: если пользователь смотрит на последние точки
     const isAtEnd = (currentViewStartIdx >= (loadedPoints.length - VIEW_WINDOW - 1));
     
     loadedPoints.push(newPoint);
@@ -99,6 +125,7 @@ async function setupInitialDates() {
 }
 
 async function fullResetAndLoad() {
+    console.log("🔄 Выполнение полной перезагрузки данных...");
     loadedPoints = [];
     currentViewStartIdx = 0;
     hasMore = true;
@@ -151,6 +178,7 @@ async function loadMoreHistory(isInitial = false) {
             if (newPoints.length < CHUNK_SIZE) hasMore = false;
         } else {
             hasMore = false;
+            if (isInitial) initChart(); // Инициализируем пустой график, если данных нет
         }
     } catch (err) { console.error("Ошибка API:", err); }
     finally { 
@@ -161,7 +189,9 @@ async function loadMoreHistory(isInitial = false) {
 }
 
 function initChart() {
-    const ctx = document.getElementById('trendChart').getContext('2d');
+    const canvas = document.getElementById('trendChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     const color = document.getElementById('line-color').value;
 
     chart = new Chart(ctx, {
@@ -185,9 +215,9 @@ function initChart() {
             animation: false,
             scales: {
                 x: {
-                    type: 'category', // Равные расстояния
+                    type: 'category', 
                     grid: {
-                        display: true, // Линии вниз
+                        display: true,
                         color: '#e0e0e0',
                         drawTicks: true
                     },
@@ -214,19 +244,21 @@ function initChart() {
                         },
                         label: (item) => {
                             const p = loadedPoints[currentViewStartIdx + item.dataIndex];
-                            return `ID: ${p.id} | Значение: ${item.formattedValue}`;
+                            return p ? `ID: ${p.id} | Значение: ${item.formattedValue}` : '';
                         }
                     }
                 }
             }
         }
     });
+    updateChartWindow();
 }
 
 function handleWheel(e) {
     e.preventDefault();
     if (loadedPoints.length === 0 || isLoading || !chart) return;
     
+    // Шаг прокрутки
     const delta = e.deltaY > 0 ? 2 : -2;
     let nextIdx = currentViewStartIdx + delta;
     
@@ -236,7 +268,7 @@ function handleWheel(e) {
     if (nextIdx !== currentViewStartIdx) {
         currentViewStartIdx = nextIdx;
         updateChartWindow();
-        // Подгрузка истории при скролле влево
+        // Если подошли к левому краю - грузим еще историю
         if (currentViewStartIdx < 10 && hasMore && !isLoading) loadMoreHistory();
     }
 }
@@ -244,6 +276,7 @@ function handleWheel(e) {
 function updateChartWindow() {
     if (!chart || loadedPoints.length === 0) return;
 
+    // Берем текущий срез данных для отображения
     const windowData = loadedPoints.slice(currentViewStartIdx, currentViewStartIdx + VIEW_WINDOW);
     
     chart.data.labels = windowData.map(p => p.shortTime);
@@ -254,7 +287,10 @@ function updateChartWindow() {
 }
 
 function updateStatusText() {
-    if (loadedPoints.length === 0) return;
+    if (loadedPoints.length === 0) {
+        document.getElementById('status-bar').textContent = "Данных нет за выбранный период";
+        return;
+    }
     const endIdx = Math.min(currentViewStartIdx + VIEW_WINDOW - 1, loadedPoints.length - 1);
     const startP = loadedPoints[currentViewStartIdx];
     const endP = loadedPoints[endIdx];
