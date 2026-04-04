@@ -176,6 +176,31 @@ canvas {
     display: block;
 }
 
+.chart-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    font-size: 15px;
+    color: #65676b;
+    background: #fafbfc;
+    border-radius: 8px;
+    border: 1px dashed #ccd0d5;
+    z-index: 1;
+}
+
+.chart-empty-state.hidden {
+    display: none;
+}
+
+#chartWrapper canvas.chart-hidden {
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* Адаптивность */
 @media (max-width: 900px) {
     .controls {

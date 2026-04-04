@@ -21,6 +21,23 @@ const pool = new Pool({
 
 let lastBroadCastedId = 0;
 
+wss.on('connection', (ws) => {
+    ws.on('message', (raw) => {
+        try {
+            const s = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+            const j = JSON.parse(s);
+            if (j && j.type === 'ping') {
+                ws.send(JSON.stringify({
+                    type: 'pong',
+                    id: j.id,
+                    t: j.t,
+                    serverTime: Date.now(),
+                }));
+            }
+        } catch (_) { /* не msgpack-сообщения с клиента игнорируем */ }
+    });
+});
+
 async function initTracker() {
     const res = await pool.query('SELECT MAX(id) as id FROM data_transmissions');
     lastBroadCastedId = Number(res.rows[0].id) || 0;
