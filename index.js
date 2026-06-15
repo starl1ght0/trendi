@@ -1,23 +1,18 @@
 const express = require('express');
-const { Pool } = require('pg');
 const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const msgpack = require('msgpack5')();
-require('dotenv').config();
+const { pool, getAppRoot, initDb } = require('./db');
+
+if (!process.env.PORT) {
+    require('dotenv').config();
+}
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const PORT = process.env.PORT || 3000;
-
-const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT),
-    database: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-});
 
 let lastBroadCastedId = 0;
 
@@ -68,11 +63,15 @@ async function poll() {
 
 setInterval(poll, 1000);
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(getAppRoot(), 'public')));
 
 app.get('/api/data-range', async (req, res) => {
     const result = await pool.query('SELECT MIN(dt) as min_dt FROM data_transmissions');
-    res.json({ success: true, min: result.rows[0].min_dt });
+    const min = result.rows[0].min_dt;
+    res.json({
+        success: true,
+        min: min ? (min instanceof Date ? min.toISOString() : min) : null,
+    });
 });
 
 app.get('/api/trends', async (req, res) => {
@@ -103,6 +102,6 @@ app.get('/api/trends', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-initTracker().then(() => {
+initDb().then(() => initTracker()).then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`Server: http://localhost:${PORT}`));
 });

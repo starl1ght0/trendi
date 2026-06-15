@@ -13,6 +13,10 @@ build/
 *.tmp
 *.temp
 
+# Локальная SQLite-база (копируется в portable вручную)
+data/*.db
+data/*.db-*
+
 # Системные файлы
 .DS_Store
 Thumbs.db
