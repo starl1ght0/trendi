@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>График трендов</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/msgpack5@6.0.2/dist/msgpack5.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <button id="toggle-settings" class="btn-secondary">Настройки</button>
+            <h1>График трендов</h1>
+        </div>
+
+        <div class="fixed-controls">
+            <button id="load-btn" class="btn-primary">Обновить график</button>
+            <div id="status-bar" class="status-bar">Инициализация системы...</div>
+        </div>
+
+        <div id="settings-panel" class="settings-panel hidden">
+            <div class="controls">
+                <div class="control-group">
+                    <label>Колонка данных:</label>
+                    <select id="column">
+                        <option value="value">value</option>
+                        <option value="p1">p1</option>
+                        <option value="p2">p2</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>Начало:</label>
+                    <input type="datetime-local" id="start" step="1">
+                </div>
+                <div class="control-group">
+                    <label>Конец:</label>
+                    <input type="datetime-local" id="end" step="1">
+                </div>
+                <div class="control-group">
+                    <label>Цвет графика:</label>
+                    <input type="color" id="line-color" value="#0084ff">
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-area" id="chartWrapper">
+            <div id="chart-empty-state" class="chart-empty-state hidden" role="status">
+                В выбранном диапазоне дат нет данных для отображения.
+            </div>
+            <canvas id="trendChart"></canvas>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

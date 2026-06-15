@@ -1,0 +1,9 @@
+﻿TrendChartsForArchivarius - portable
+
+ЗАПУСК: дважды щёлкните TrendCharts.exe
+ПЕРЕНОС: скопируйте всю папку TrendChartsPortable на другой компьютер
+БАЗА ДАННЫХ: data\trends.db (копируется вместе с папкой)
+ОСТАНОВКА: закройте чёрное окно консоли
+АДРЕС: http://localhost:3000
+
+Запасной запуск: TrendCharts.cmd
